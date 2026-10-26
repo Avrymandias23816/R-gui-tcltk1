@@ -4,7 +4,10 @@
 #=============================================================================
 
 library(tcltk)
+library(tcltk2)
 library(readxl)
+library(readr)
+library(foreign) # readxl, readr, foreign buat baca data import
 
 # Wanra Global 
 options(Rgui.theme_bl = list(
@@ -18,7 +21,7 @@ options(Rgui.theme_bl = list(
 tcl("options", "add", )
 
 #=============================================================================
-# 1. Struktur utama
+# 1. Struktur utama dan tabel
 #=============================================================================
 
 # 1.1 Main window
@@ -31,8 +34,11 @@ Start_open <- function() {
   # Main window setting (color, frame size)
   tkconfigure(Main_page, background = getOption("Rgui.theme_bl")$primary)
   tkwm.geometry(Main_page, "1050x800")
-  tkwm.minsize(Main_page, "1050x800")
-  tkwm.maxsize(Main_page, "1050x800")
+tkwm.minsize(Main_page, "800x600") 
+
+  # Main container
+  main_container <- tkframe(Main_page, background = getOption("Rgui.theme_bl")$primary)
+  tkpack(main_container, fill = "both", expand = TRUE, padx = 10, pady = 10)
 
 
   # 1.2 topmenu
@@ -40,21 +46,21 @@ Start_open <- function() {
     # 1.2.1 topmenu member
   Submenu_container <- list(
   
-  # File 
+    # File 
   label = "File",
   children = list(
     list(
       label = "Import Data",
       children = list(
-        list(label = "Excel", command = "sumvar1"),
-        list(label = "CSV", command = "manualvar1"),
-        list(label = "SPSS", command = "import1pop"),
-		list(label = "txt", command = "")
+        list(label = "Excel", command = "Excel_input"),
+        list(label = "CSV", command = "CSV_input"),
+        list(label = "SPSS", command = "SPSS_input"),
+		list(label = "text", command = "Text_input")
         )
      )
   ),
 
-  # Uji hipotesis var
+    # Uji hipotesis var
   label = "Pengujian Hipotesis",
   children = list(
     list(
@@ -69,7 +75,7 @@ Start_open <- function() {
 		)
       ),
 
-  # Materi 
+    # Materi 
   label = "Materi",
   children = list(
     list(
@@ -83,14 +89,14 @@ Start_open <- function() {
     )
   ),
 
-  # View 
+    # View 
   label = "View",
   children = list(
     list(label = "Console", command = ""),
     list(label = "Switch Theme", command = "")  
     ),
 
-  # Petunjuk 
+    # Petunjuk 
   label = "Petunjuk",
   children = list(
     list(
@@ -101,13 +107,13 @@ Start_open <- function() {
     )
   ),
 
-  # Tentang kami 
+    # Tentang kami 
   label = "Tentang kami",
   children = list(
     list(label = "Developer", command = "..."),
     list(label = "Mata kuliah", command = "...")
     )
-),
+)
 
 
     # 1.2.2 topmenu built behavior function
@@ -140,34 +146,197 @@ Start_open <- function() {
 
   # 1.3 Main window guide
 
-<- tkframe(Main_page,)
 
-  tkpack(button_header, padx = 20, pady = 40)
-
-  # Button Header
-  tkpack(tklabel(Main_page, background = getOption("Rgui.theme_bl")$primary))
-    frame_atas,
-    text = "...",
-    font = "Helvetica 20 bold",
-    background = tclvalue(tcl("set", "::background")),
-    foreground = tclvalue(tcl("set", "::secondary"))
-  ))
-  tkpack(
-    tklabel(
-      frame_atas,
-      text = "...",
-      font = "Helvetica 10 italic",
-    background = tclvalue(tcl("set", "::background")),
-    foreground = tclvalue(tcl("set", "::secondary"))
-    ),
-    pady = 5
-  )
-}
 
 #=============================================================================
 # 2. Input Data
 #=============================================================================
 
+# 2.1 Central data memory (Need initiated first)
+if (!exists("APP_STATE")) {
+  APP_STATE <- new.env()
+  APP_STATE$data <- data.frame()        # Data aktual (baris = observasi, kolom = variabel)
+  APP_STATE$variable_info <- data.frame( # Metadata untuk "Variable View"
+    name = character(),
+    type = character(),      # "numeric", "character", "factor"
+    label = character(),     # Label deskriptif
+    stringsAsFactors = FALSE
+  )
+  APP_STATE$is_dirty <- FALSE # Penanda apakah ada perubahan yang belum disimpan
+}
+
+# Data View 2.2
+
+  # 2.1.1 Data view body function
+create_data_view <- function(parent, state) {
+  # Frame pembungkus
+  frame_data <- tkframe(parent, relief = "groove", borderwidth = 2)
+  tkpack(frame_data, fill = "both", expand = TRUE, padx = 5, pady = 5)
+
+  # Buat tclArray sebagai jembatan data
+  data_array <- tclArray()
+  
+  # Isi array dengan data dari memori pusat
+  refresh_data_table(data_array, state$data)
+
+  # Buat widget Tktable
+  # Gunakan 'titlerows=1' dan 'titlecols=1' untuk header
+  data_table <- tkwidget(
+    frame_data, "table",
+    variable = data_array,
+    rows = max(1, nrow(state$data) + 1), # +1 untuk header
+    cols = max(1, ncol(state$data) + 1),
+    titlerows = 1,
+    titlecols = 1,
+    selectmode = "extended",
+    colwidth = 10,
+    rowheight = 2,
+    background = "#f5f7fa"
+  )
+  tkpack(data_table, fill = "both", expand = TRUE)
+
+  # Simpan referensi agar bisa diakses fungsi lain
+  state$data_table_widget <- data_table
+  state$data_array <- data_array
+}
+
+# Fungsi untuk menyegarkan tabel dari data.frame
+refresh_data_table <- function(data_array, df) {
+  # Bersihkan array (kecuali header)
+  # ... (implementasi pembersihan)
+  
+  # Isi header kolom (baris 0, kolom 1..n)
+  if (ncol(df) > 0) {
+    for (j in 1:ncol(df)) {
+      data_array[[0, j]] <- as.tclObj(names(df)[j])
+    }
+  }
+  
+  # Isi data (baris 1..n, kolom 1..n)
+  for (i in 1:nrow(df)) {
+    for (j in 1:ncol(df)) {
+      data_array[[i, j]] <- as.tclObj(as.character(df[i, j]))
+    }
+  }
+}
+
+  # 2.1.2 menyimpan dari Tktable ke APP_STATE$data (memory central)
+sync_data_view_to_state <- function(state) {
+  n_rows <- as.integer(tclvalue(tkindex(state$data_table_widget, "end", "row"))) - 1
+  n_cols <- as.integer(tclvalue(tkindex(state$data_table_widget, "end", "col"))) - 1
+  
+  if (n_rows < 1 || n_cols < 1) return()
+  
+  new_df <- data.frame(matrix(NA, nrow = n_rows, ncol = n_cols))
+  for (i in 1:n_rows) {
+    for (j in 1:n_cols) {
+      new_df[i, j] <- tclvalue(state$data_array[[i, j]])
+    }
+  }
+  colnames(new_df) <- sapply(1:n_cols, function(j) tclvalue(state$data_array[[0, j]]))
+  
+  # Konversi tipe data berdasarkan metadata
+  new_df <- coerce_types(new_df, state$variable_info)
+  
+  state$data <- new_df
+  state$is_dirty <- TRUE
+}
+
+
+# 2.2 Variable view
+
+  # 2.2.1 Var view body function
+create_variable_view <- function(parent, state) {
+  frame_var <- tkframe(parent, relief = "groove", borderwidth = 2)
+  tkpack(frame_var, fill = "both", expand = TRUE, padx = 5, pady = 5)
+  
+  var_array <- tclArray()
+  refresh_variable_table(var_array, state$variable_info)
+  
+  var_table <- tkwidget(
+    frame_var, "table",
+    variable = var_array,
+    rows = max(1, nrow(state$variable_info) + 1),
+    cols = 4, # name, type, label, dll.
+    titlerows = 1,
+    titlecols = 1,
+    selectmode = "browse",
+    colwidth = 15,
+    background = "#f5f7fa"
+  )
+  tkpack(var_table, fill = "both", expand = TRUE)
+  
+  # Validasi sel (contoh untuk kolom 'type')
+  # (Implementasi vcmd akan dijelaskan di bawah)
+  
+  state$var_table_widget <- var_table
+  state$var_array <- var_array
+}
+
+  # 2.2.2 Var view input validation
+# validasi 'type'
+validate_type <- function(S) {
+  valid_types <- c("numeric", "character", "factor", "integer", "logical")
+  if (S %in% valid_types || S == "") {
+    return(tcl("expr", TRUE))
+  } else {
+    tkmessageBox(message = "Tipe data tidak valid! Pilih: numeric, character, factor, dll.")
+    return(tcl("expr", FALSE))
+  }
+}
+
+
+# 2.3 Konfirmasi impor data
+import_data_with_confirmation <- function(file_path, file_type, state) {
+  # 1. Cek apakah ada data
+  if (nrow(state$data) > 0 || ncol(state$data) > 0) {
+    response <- tkmessageBox(
+      title = "Konfirmasi Impor",
+      message = "Data yang ada akan ditimpa. Lanjutkan?",
+      type = "yesno",
+      icon = "warning"
+    )
+    if (tclvalue(response) != "yes") return(FALSE)
+  }
+  
+  # 2. Baca file sesuai tipe
+  new_data <- switch(file_type,
+    "xlsx" = readxl::read_excel(file_path),
+    "csv"  = readr::read_csv(file_path),
+    "spss" = foreign::read.spss(file_path, to.data.frame = TRUE),
+    "txt"  = readr::read_tsv(file_path)
+  )
+  
+  # 3. Perbarui memori pusat
+  state$data <- new_data
+  state$variable_info <- infer_variable_info(new_data) # Fungsi inferensi tipe
+  
+  # 4. Segarkan UI
+  refresh_data_table(state$data_array, state$data)
+  refresh_variable_table(state$var_array, state$variable_info)
+  
+  return(TRUE)
+}
+
+# 2.4 Sinkron tipe data jika ada perubahan numeric ~ character (berdasarkan variable info)
+coerce_types <- function(df, var_info) {
+  for (i in seq_len(ncol(df))) {
+    col_name <- names(df)[i]
+    target_type <- var_info$type[var_info$name == col_name]
+    
+    if (length(target_type) == 0) next
+    
+    df[[i]] <- switch(target_type,
+      "numeric"   = as.numeric(df[[i]]),
+      "integer"   = as.integer(df[[i]]),
+      "factor"    = as.factor(df[[i]]),
+      "character" = as.character(df[[i]]),
+      "logical"   = as.logical(df[[i]]),
+      df[[i]] # default: biarkan
+    )
+  }
+  return(df)
+}
 
 #=============================================================================
 # 3.  Pengujian Hipotesis Var 1-population
@@ -182,28 +351,28 @@ sumvar1=function()
   require(tcltk)
   require(tcltk2)
   
-  w1 = tktoplevel(bg="#c9a98d")
+  w1 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(w1) = "Summary Data"
-  tkgrid(tklabel(w1,text="Summary Data Pengujian Hipotesis Variansi Satu Populasi",font=teks1,bg="#c9a98d"),sticky="news")
+  tkgrid(tklabel(w1,text="Summa<F12>ry Data Pengujian Hipotesis Variansi Satu Populasi",font=teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   
   banyak = tclVar("  ")
-  eb1 = tkentry(w1,width="20",textvariable = banyak,bg="#d3c3b2")
-  tkgrid(tklabel(w1,text="Banyak sampel :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(w1,width="20",textvariable = banyak,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w1,text="Banyak sampel :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   s2 = tclVar(" ")
-  eb2 = tkentry(w1,width="20",textvariable = s2,bg="#d3c3b2")
-  tkgrid(tklabel(w1,text="Variansi sampel (S^2) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2 = tkentry(w1,width="20",textvariable = s2,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w1,text="Variansi sampel (S^2) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
   
   sig2 = tclVar(" ")
-  eb3 = tkentry(w1,width="20",textvariable=sig2,bg="#d3c3b2")
-  tkgrid(tklabel(w1,text="Variansi populasi (σ0^2) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb3 = tkentry(w1,width="20",textvariable=sig2,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w1,text="Variansi populasi (σ0^2) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb3)
   
   alphaa = tclVar(" ")
-  eb4=tkentry(w1,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(w1,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb4=tkentry(w1,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w1,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb4)
   
   outputsum1 = function()
@@ -221,10 +390,10 @@ sumvar1=function()
     
     if(chh<cht)
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=82,height=18,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=82,height=18,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -240,10 +409,10 @@ sumvar1=function()
     }
     else
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=82,height=18,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=82,height=18,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -257,9 +426,9 @@ sumvar1=function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t: ",h0,vp))
     }
-    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg="#c9a98d")
+    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w11,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w11,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   
   outputsum2 = function()
@@ -277,10 +446,10 @@ sumvar1=function()
     
     if(chh<cht1)
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=85,height=20,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=85,height=20,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -298,10 +467,10 @@ sumvar1=function()
     }
     else if(chh>cht2)
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=85,height=20,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=85,height=20,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -320,10 +489,10 @@ sumvar1=function()
     }
     else
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=85,height=20,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=85,height=20,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,vp,"
@@ -339,9 +508,9 @@ sumvar1=function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t: ",h0,vp))
     }
-    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg="#c9a98d")
+    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w11,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w11,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   
   outputsum3 = function()
@@ -358,10 +527,10 @@ sumvar1=function()
     
     if(chh > cht)
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=82,height=18,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=82,height=18,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -377,10 +546,10 @@ sumvar1=function()
     }
     else
     {
-      w11 = tktoplevel(bg="#d3c3b2")
+      w11 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w11) = "Hasil Analisis Data"
-      insert = tktext(w11,font=teks2,width=82,height=18,bg="#d3c3b2")
-      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w11,font=teks2,width=82,height=18,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w11,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H1 :",h0,vp,"
@@ -394,18 +563,18 @@ sumvar1=function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t: ",h0,vp))
     }
-    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg="#c9a98d")
+    tombol=tkbutton(w11,text="Kembali",command=function()tkdestroy(w11),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w11,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w11,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   #pilihan arah uji hipotesis satu populasi
-  tkgrid(tklabel(w1,text="",bg="#c9a98d"))
-  tkgrid(tklabel(w1,text="Pilih uji hipotesis",font=teks3,bg="#c9a98d"),sticky="news")
-  kiri =tkbutton(w1,text="Sisi Kiri",command = function()outputsum1(),bg="#ebe1d1")
+  tkgrid(tklabel(w1,text="",bg = getOption("Rgui.theme_bl")$background))
+  tkgrid(tklabel(w1,text="Pilih uji hipotesis",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  kiri =tkbutton(w1,text="Sisi Kiri",command = function()outputsum1(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(kiri,sticky="news")
-  sisi2=tkbutton(w1,text="2 Sisi",command=function()outputsum2(),bg="#ebe1d1")
+  sisi2=tkbutton(w1,text="2 Sisi",command=function()outputsum2(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(sisi2,sticky="news")
-  kanan=tkbutton(w1,text="Sisi Kanan",command=function()outputsum3(),bg="#ebe1d1")
+  kanan=tkbutton(w1,text="Sisi Kanan",command=function()outputsum3(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(kanan,sticky="news")
 }
 
@@ -417,31 +586,31 @@ manualvar1 = function()
   require(tcltk)
   require(tcltk2)
   
-  w2 = tktoplevel(bg="#c9a98d")
+  w2 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(w2) = "Input Manual Data"
-  tkgrid(tklabel(w2,text="Input Data Pengujian Hipotesis Variansi Satu Populasi",font=teks1,bg="#c9a98d"),sticky="news")
+  tkgrid(tklabel(w2,text="Input Data Pengujian Hipotesis Variansi Satu Populasi",font=teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   
   banyak1 = tclVar("  ")
-  eb1 = tkentry(w2,width="20",textvariable = banyak1,bg="#d3c3b2")
-  tkgrid(tklabel(w2,text="Banyak sampel :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(w2,width="20",textvariable = banyak1,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w2,text="Banyak sampel :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   alfa = tclVar(" ")
-  eb2=tkentry(w2,width="20",textvariable=alfa,bg="#d3c3b2")
-  tkgrid(tklabel(w2,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2=tkentry(w2,width="20",textvariable=alfa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w2,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
-  tkgrid(tklabel(w2,text=" ",bg="#c9a98d"))
-  input = tkbutton(w2,text="Input",command = function()inputvar(),bg="#ebe1d1")
+  tkgrid(tklabel(w2,text=" ",bg = getOption("Rgui.theme_bl")$background))
+  input = tkbutton(w2,text="Input",command = function()inputvar(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(input)
   
   inputvar = function()
   {
     vp = tclVar(" ")
     n = as.numeric(tclvalue(banyak1))
-    w21 = tktoplevel(bg="#ebe1d1")
+    w21 = tktoplevel(bg = getOption("Rgui.theme_bl")$secondary)
     tktitle(w21) = "Input Data"
-    tkgrid(tklabel(w21,text="Input Data",font=teks1,bg="#ebe1d1"),sticky="news")
-    tkgrid(tklabel(w21,text="",bg="#ebe1d1"))
+    tkgrid(tklabel(w21,text="Input Data",font=teks1,bg = getOption("Rgui.theme_bl")$secondary),sticky="news")
+    tkgrid(tklabel(w21,text="",bg = getOption("Rgui.theme_bl")$secondary))
     
     #layout tabel
     tclRequire("Tktable")
@@ -455,10 +624,10 @@ manualvar1 = function()
     #tabel
     tabel=tkwidget(w21,"table",variable=layoutinput,rows=n+1,cols=2,titlerows=1,titlecols=1,selectmode="extended  ",colwidth=8,rowheight=2)
     tkconfigure(tabel,selectmode="extended",rowseparator="\n",colseparator="\t")
-    tkgrid(tklabel(w21,text="Data: ",bg="#ebe1d1"),tabel)
-    tkgrid(tklabel(w21,text=" ",bg="#ebe1d1"))
-    tkgrid(tklabel(w21,text="Varians Populasi: ",bg="#ebe1d1"),tkentry(w21,width="10",textvariable=vp))
-    tkgrid(tklabel(w21,text="",bg="#ebe1d1"))
+    tkgrid(tklabel(w21,text="Data: ",bg = getOption("Rgui.theme_bl")$secondary),tabel)
+    tkgrid(tklabel(w21,text=" ",bg = getOption("Rgui.theme_bl")$secondary))
+    tkgrid(tklabel(w21,text="Varians Populasi: ",bg = getOption("Rgui.theme_bl")$secondary),tkentry(w21,width="10",textvariable=vp))
+    tkgrid(tklabel(w21,text="",bg = getOption("Rgui.theme_bl")$secondary))
     
     outputmanual1 = function()
     {
@@ -480,10 +649,10 @@ manualvar1 = function()
       
       if(pvalue<alpha)
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,bg="#d3c3b2",width=82,height=15)
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,bg = getOption("Rgui.theme_bl")$primary,width=82,height=15)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -499,10 +668,10 @@ manualvar1 = function()
       }
       else
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,bg="#d3c3b2",width=82,height=15)
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,bg = getOption("Rgui.theme_bl")$primary,width=82,height=15)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -516,9 +685,9 @@ manualvar1 = function()
 4. Keputusan         : Terima H0
 5. Kesimpulan        : ",h0,varpop))
       }
-      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg="#c9a98d")
+      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w211,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w211,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     outputmanual2 = function()
@@ -542,10 +711,10 @@ manualvar1 = function()
       
       if(pvalue<alpha/2)
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,width=85,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,width=85,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -562,10 +731,10 @@ manualvar1 = function()
       }
       else if(pvalue>(1-(alpha/2)))
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,width=85,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,width=85,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -582,10 +751,10 @@ manualvar1 = function()
       }
       else
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,width=85,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,width=85,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -600,9 +769,9 @@ manualvar1 = function()
 4. Keputusan          : Terima H0
 5. Kesimpulan         : ",h0,varpop))
       }
-      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg="#c9a98d")
+      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w211,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w211,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     outputmanual3 = function()
@@ -625,10 +794,10 @@ manualvar1 = function()
       
       if(pvalue<alpha)
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -644,10 +813,10 @@ manualvar1 = function()
       }
       else
       {
-        w211 = tktoplevel(bg="#d3c3b2")
+        w211 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w211) = "Hasil Analisis Data"
-        insert = tktext(w211,font=teks2,bg="#d3c3b2",width=82,height=15)
-        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w211,font=teks2,bg = getOption("Rgui.theme_bl")$primary,width=82,height=15)
+        tkgrid(tklabel(w211,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,varpop,"
@@ -661,14 +830,14 @@ manualvar1 = function()
 4. Keputusan        : Terima H0
 5. Kesimpulan       : ",h0,varpop))
       }
-      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg="#c9a98d")
+      tombol=tkbutton(w211,text="Kembali",command=function()tkdestroy(w211),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w211,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w211,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
-    bkiri =tkbutton(w21,text="Sisi Kiri",command = function()outputmanual1(),bg="#ebe1d1")
-    b2sisi=tkbutton(w21,text="2 Sisi",command=function()outputmanual2(),bg="#ebe1d1")
-    bkanan=tkbutton(w21,text="Sisi Kanan",command=function()outputmanual3(),bg="#ebe1d1")
+    bkiri =tkbutton(w21,text="Sisi Kiri",command = function()outputmanual1(),bg = getOption("Rgui.theme_bl")$secondary)
+    b2sisi=tkbutton(w21,text="2 Sisi",command=function()outputmanual2(),bg = getOption("Rgui.theme_bl")$secondary)
+    bkanan=tkbutton(w21,text="Sisi Kanan",command=function()outputmanual3(),bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(bkiri,b2sisi,bkanan,sticky="we")
   }
 }
@@ -680,27 +849,27 @@ tkadd(sub_m1.1, "cascade", label="Import Data", menu=sub2_m1.1)
 
 import1pop = function()
 {
-  jendelaimport1 = tktoplevel(bg="#c9a98d")
+  jendelaimport1 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(jendelaimport1) = "Import Data"
-  tkgrid(tklabel(jendelaimport1, text="Import Data SPSS Pengujian Hipotesis Variansi Satu Populasi", font = teks1,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
-  tkgrid(tklabel(jendelaimport1,text="Pastikan data format Anda berupa .sav",font=teks3,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport1, text="Import Data SPSS Pengujian Hipotesis Variansi Satu Populasi", font = teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
+  tkgrid(tklabel(jendelaimport1,text="Pastikan data format Anda berupa .sav",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   alphaa = tclVar(" ")
-  eb1 = tkentry(jendelaimport1,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport1,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(jendelaimport1,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport1,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   varpop = tclVar(" ")
-  eb2 = tkentry(jendelaimport1,width="20",textvariable=varpop,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport1,text="Variansi Populasi :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2 = tkentry(jendelaimport1,width="20",textvariable=varpop,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport1,text="Variansi Populasi :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
   
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
-  import=tkbutton(jendelaimport1,text="Import",command = function()import1(),bg="#ebe1d1")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
+  import=tkbutton(jendelaimport1,text="Import",command = function()import1(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(import)
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   import1 = function()
   {
@@ -729,10 +898,10 @@ import1pop = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -750,10 +919,10 @@ import1pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -769,9 +938,9 @@ import1pop = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujiduasisi = function()
@@ -784,10 +953,10 @@ import1pop = function()
       
       if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -805,10 +974,10 @@ import1pop = function()
       }
       else if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -826,10 +995,10 @@ import1pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -845,9 +1014,9 @@ import1pop = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujisisikanan = function()
@@ -860,10 +1029,10 @@ import1pop = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -881,10 +1050,10 @@ import1pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -900,18 +1069,18 @@ import1pop = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
-    tombollihat = tkbutton(jendelaimport1,text="Lihat Data",command = lihatdata,bg="#ebe1d1")
+    tombollihat = tkbutton(jendelaimport1,text="Lihat Data",command = lihatdata,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombollihat)
-    tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+    tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
     
-    bkiri =tkbutton(jendelaimport1,text="Sisi Kiri",command = ujisisikiri,bg="#ebe1d1")
-    b2sisi=tkbutton(jendelaimport1,text="2 Sisi",command = ujiduasisi,bg="#ebe1d1")
-    bkanan=tkbutton(jendelaimport1,text="Sisi Kanan",command = ujisisikanan,bg="#ebe1d1")
+    bkiri =tkbutton(jendelaimport1,text="Sisi Kiri",command = ujisisikiri,bg = getOption("Rgui.theme_bl")$secondary)
+    b2sisi=tkbutton(jendelaimport1,text="2 Sisi",command = ujiduasisi,bg = getOption("Rgui.theme_bl")$secondary)
+    bkanan=tkbutton(jendelaimport1,text="Sisi Kanan",command = ujisisikanan,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(bkiri,sticky="news")
     tkgrid(b2sisi,sticky="news")
     tkgrid(bkanan,sticky="news")
@@ -923,27 +1092,27 @@ tkadd(sub2_m1.1, "command", label="SPSS (.sav)", command=function()import1pop())
 
 import1popex = function()
 {
-  jendelaimport1 = tktoplevel(bg="#c9a98d")
+  jendelaimport1 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(jendelaimport1) = "Import Data"
-  tkgrid(tklabel(jendelaimport1, text="Import Data Excel Pengujian Hipotesis Variansi Satu Populasi", font = teks1,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
-  tkgrid(tklabel(jendelaimport1,text="Pastikan data format Anda berupa .xlsx",font=teks3,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport1, text="Import Data Excel Pengujian Hipotesis Variansi Satu Populasi", font = teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
+  tkgrid(tklabel(jendelaimport1,text="Pastikan data format Anda berupa .xlsx",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   alphaa = tclVar(" ")
-  eb1 = tkentry(jendelaimport1,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport1,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(jendelaimport1,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport1,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   varpop = tclVar(" ")
-  eb2 = tkentry(jendelaimport1,width="20",textvariable=varpop,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport1,text="Variansi Populasi :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2 = tkentry(jendelaimport1,width="20",textvariable=varpop,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport1,text="Variansi Populasi :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
   
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
-  import=tkbutton(jendelaimport1,text="Import",command = function()import1(),bg="#ebe1d1")
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
+  import=tkbutton(jendelaimport1,text="Import",command = function()import1(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(import)
-  tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   import1 = function()
   {
@@ -972,10 +1141,10 @@ import1popex = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -993,10 +1162,10 @@ import1popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1012,9 +1181,9 @@ import1popex = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujiduasisi = function()
@@ -1027,10 +1196,10 @@ import1popex = function()
       
       if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1048,10 +1217,10 @@ import1popex = function()
       }
       else if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1069,10 +1238,10 @@ import1popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=85,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1088,9 +1257,9 @@ import1popex = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujisisikanan = function()
@@ -1103,10 +1272,10 @@ import1popex = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1124,10 +1293,10 @@ import1popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=15,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,vp,"
@@ -1143,18 +1312,18 @@ import1popex = function()
 4. Keputusan \t\t: Terima H0
 5. Kesimpulan \t\t:",h0,vp))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
-    tombollihat = tkbutton(jendelaimport1,text="Lihat Data",command = lihatdata,bg="#ebe1d1")
+    tombollihat = tkbutton(jendelaimport1,text="Lihat Data",command = lihatdata,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombollihat)
-    tkgrid(tklabel(jendelaimport1,text=" ",bg="#c9a98d"))
+    tkgrid(tklabel(jendelaimport1,text=" ",bg = getOption("Rgui.theme_bl")$background))
     
-    bkiri =tkbutton(jendelaimport1,text="Sisi Kiri",command = ujisisikiri,bg="#ebe1d1")
-    b2sisi=tkbutton(jendelaimport1,text="2 Sisi",command = ujiduasisi,bg="#ebe1d1")
-    bkanan=tkbutton(jendelaimport1,text="Sisi Kanan",command = ujisisikanan,bg="#ebe1d1")
+    bkiri =tkbutton(jendelaimport1,text="Sisi Kiri",command = ujisisikiri,bg = getOption("Rgui.theme_bl")$secondary)
+    b2sisi=tkbutton(jendelaimport1,text="2 Sisi",command = ujiduasisi,bg = getOption("Rgui.theme_bl")$secondary)
+    bkanan=tkbutton(jendelaimport1,text="Sisi Kanan",command = ujisisikanan,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(bkiri,sticky="news")
     tkgrid(b2sisi,sticky="news")
     tkgrid(bkanan,sticky="news")
@@ -1176,38 +1345,38 @@ sumvar2 = function()
   require(tcltk)
   require(tcltk2)
   
-  w3 = tktoplevel(bg="#c9a98d")
+  w3 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(w3) = "Summary Data"
-  tkgrid(tklabel(w3,text="Summary Data Pengujian Hipotesis Variansi Dua Populasi",font=teks1,bg="#c9a98d"),sticky="news")
+  tkgrid(tklabel(w3,text="Summary Data Pengujian Hipotesis Variansi Dua Populasi",font=teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   
-  tkgrid(tklabel(w3,text="Sampel 1",font=teks3,bg="#c9a98d"))
+  tkgrid(tklabel(w3,text="Sampel 1",font=teks3,bg = getOption("Rgui.theme_bl")$background))
   banyak1 = tclVar("  ")
-  eb1 = tkentry(w3,width="20",textvariable = banyak1,bg="#d3c3b2")
-  tkgrid(tklabel(w3,text="Banyak sampel 1 :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(w3,width="20",textvariable = banyak1,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w3,text="Banyak sampel 1 :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   varsam1 = tclVar(" ")
-  eb2 = tkentry(w3,width="20",textvariable = varsam1,bg="#d3c3b2")
-  tkgrid(tklabel(w3,text="Variansi sampel 1 (S1^2) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2 = tkentry(w3,width="20",textvariable = varsam1,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w3,text="Variansi sampel 1 (S1^2) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
   
-  tkgrid(tklabel(w3,text="",bg="#c9a98d"))
-  tkgrid(tklabel(w3,text="Sampel 2",font=teks3,bg="#c9a98d"))
+  tkgrid(tklabel(w3,text="",bg = getOption("Rgui.theme_bl")$background))
+  tkgrid(tklabel(w3,text="Sampel 2",font=teks3,bg = getOption("Rgui.theme_bl")$background))
   
   banyak2 = tclVar("  ")
-  eb4 = tkentry(w3,width="20",textvariable = banyak2,bg="#d3c3b2")
-  tkgrid(tklabel(w3,text="Banyak sampel 2 :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb4 = tkentry(w3,width="20",textvariable = banyak2,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w3,text="Banyak sampel 2 :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb4)
   
   varsam2 = tclVar(" ")
-  eb5 = tkentry(w3,width="20",textvariable = varsam2,bg="#d3c3b2")
-  tkgrid(tklabel(w3,text="Variansi sampel 2 (S2^2) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb5 = tkentry(w3,width="20",textvariable = varsam2,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w3,text="Variansi sampel 2 (S2^2) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb5)
   
-  tkgrid(tklabel(w3,text="",bg="#c9a98d"))
+  tkgrid(tklabel(w3,text="",bg = getOption("Rgui.theme_bl")$background))
   alphaa = tclVar(" ")
-  eb7=tkentry(w3,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(w3,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb7=tkentry(w3,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w3,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb7)
   
   outputsumvar1 = function()
@@ -1225,10 +1394,10 @@ sumvar2 = function()
     
     if(fh<ftb)
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1242,10 +1411,10 @@ sumvar2 = function()
     
     else
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1256,9 +1425,9 @@ sumvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
     }
-    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg="#c9a98d")
+    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w31,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w31,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   
   outputsumvar2 = function()
@@ -1277,10 +1446,10 @@ sumvar2 = function()
     
     if(fh<ft1)
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1294,10 +1463,10 @@ sumvar2 = function()
     }
     else if(fh>ft2)
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1311,10 +1480,10 @@ sumvar2 = function()
     }
     else
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1326,9 +1495,9 @@ sumvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
     }
-    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg="#c9a98d")
+    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w31,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w31,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   
   outputsumvar3 = function()
@@ -1346,10 +1515,10 @@ sumvar2 = function()
     
     if(fh>ft)
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1363,10 +1532,10 @@ sumvar2 = function()
     
     else
     {
-      w31 = tktoplevel(bg="#d3c3b2")
+      w31 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
       tktitle(w31) = "Hasil Analisis Data"
-      insert = tktext(w31,font=teks2,width=82,height=12,bg="#d3c3b2")
-      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+      insert = tktext(w31,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+      tkgrid(tklabel(w31,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
       tkgrid(insert)
       tkinsert(insert,"end",paste("1. Hipotesis
      H0 :",h0,"
@@ -1377,19 +1546,19 @@ sumvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
     }
-    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg="#c9a98d")
+    tombol=tkbutton(w31,text="Kembali",command=function()tkdestroy(w31),bg = getOption("Rgui.theme_bl")$background)
     tkgrid(tombol)
-    tkgrid(tklabel(w31,text=" ",bg="#d3c3b2"))
+    tkgrid(tklabel(w31,text=" ",bg = getOption("Rgui.theme_bl")$primary))
   }
   
   #pilihan arah uji hipotesis satu populasi
-  tkgrid(tklabel(w3,text="",bg="#c9a98d"))
-  tkgrid(tklabel(w3,text="Pilih uji hipotesis",font=teks3,bg="#c9a98d"),sticky="news")
-  kiri =tkbutton(w3,text="Sisi Kiri",command = function()outputsumvar1(),bg="#ebe1d1")
+  tkgrid(tklabel(w3,text="",bg = getOption("Rgui.theme_bl")$background))
+  tkgrid(tklabel(w3,text="Pilih uji hipotesis",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  kiri =tkbutton(w3,text="Sisi Kiri",command = function()outputsumvar1(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(kiri,sticky="news")
-  sisi2=tkbutton(w3,text="2 Sisi",command=function()outputsumvar2(),bg="#ebe1d1")
+  sisi2=tkbutton(w3,text="2 Sisi",command=function()outputsumvar2(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(sisi2,sticky="news")
-  kanan=tkbutton(w3,text="Sisi Kanan",command=function()outputsumvar3(),bg="#ebe1d1")
+  kanan=tkbutton(w3,text="Sisi Kanan",command=function()outputsumvar3(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(kanan,sticky="news")
 }
 tkadd(sub_m1.2, "command", label="Summary", command=function()sumvar2())
@@ -1397,38 +1566,38 @@ tkadd(sub_m1.2, "command", label="Summary", command=function()sumvar2())
 #------INPUT MANUAL----#
 manualvar2 = function()
 {
-  w4 = tktoplevel(bg="#c9a98d")
+  w4 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(w4) = "Input Manual"
-  tkgrid(tklabel(w4,text="Input Data Pengujian Hipotesis Variansi Dua Populasi",font=teks1,bg="#c9a98d"),sticky="news")
+  tkgrid(tklabel(w4,text="Input Data Pengujian Hipotesis Variansi Dua Populasi",font=teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   
   banyak1 = tclVar("  ")
-  eb1 = tkentry(w4,width="20",textvariable = banyak1,bg="#d3c3b2")
-  tkgrid(tklabel(w4,text="Banyak sampel 1 :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb1 = tkentry(w4,width="20",textvariable = banyak1,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w4,text="Banyak sampel 1 :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb1)
   
   banyak2 = tclVar("  ")
-  eb2 = tkentry(w4,width="20",textvariable = banyak2,bg="#d3c3b2")
-  tkgrid(tklabel(w4,text="Banyak sampel 2 :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb2 = tkentry(w4,width="20",textvariable = banyak2,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w4,text="Banyak sampel 2 :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb2)
   
   alfa = tclVar(" ")
-  eb3=tkentry(w4,width="20",textvariable=alfa,bg="#d3c3b2")
-  tkgrid(tklabel(w4,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb3=tkentry(w4,width="20",textvariable=alfa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(w4,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb3)
-  tkgrid(tklabel(w4,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(w4,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
-  input=tkbutton(w4,text="Input",command = function()inputvarman(),bg="#ebe1d1")
+  input=tkbutton(w4,text="Input",command = function()inputvarman(),bg = getOption("Rgui.theme_bl")$secondary)
   tkgrid(input)
-  tkgrid(tklabel(w4,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(w4,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   inputvarman = function()
   {
     n1 = as.numeric(tclvalue(banyak1))
     n2 = as.numeric(tclvalue(banyak2))
-    w41 = tktoplevel(bg="#ebe1d1")
+    w41 = tktoplevel(bg = getOption("Rgui.theme_bl")$secondary)
     tktitle(w41) = "Input data"
-    tkgrid(tklabel(w41,text="Masukkan data",font=teks1,bg="#ebe1d1"),sticky="n")
-    tkgrid(tklabel(w41,text="",bg="#ebe1d1"))
+    tkgrid(tklabel(w41,text="Masukkan data",font=teks1,bg = getOption("Rgui.theme_bl")$secondary),sticky="n")
+    tkgrid(tklabel(w41,text="",bg = getOption("Rgui.theme_bl")$secondary))
     
     #Layout tabel
     tclRequire("Tktable")
@@ -1447,11 +1616,11 @@ manualvar2 = function()
     layoutinput2[[0,1]]="n2"
     
     #Tabelnya
-    tabelp1=tkwidget(w41,"table",variable=layoutinput1,rows=n1+1,cols=2,titlerows=1,titlecols=1,selectmode="extended  ",colwidth=8,rowheight=2,bg="#d3c3b2")
+    tabelp1=tkwidget(w41,"table",variable=layoutinput1,rows=n1+1,cols=2,titlerows=1,titlecols=1,selectmode="extended  ",colwidth=8,rowheight=2,bg = getOption("Rgui.theme_bl")$primary)
     tkconfigure(tabelp1,selectmode="extended",rowseparator="\n",colseparator="\t")
-    tabelp2=tkwidget(w41,"table",variable=layoutinput2,rows=n2+1,cols=2,titlerows=1,titlecols=1,selectmode="extended  ",colwidth=8,rowheight=2,bg="#d3c3b2")
+    tabelp2=tkwidget(w41,"table",variable=layoutinput2,rows=n2+1,cols=2,titlerows=1,titlecols=1,selectmode="extended  ",colwidth=8,rowheight=2,bg = getOption("Rgui.theme_bl")$primary)
     tkconfigure(tabelp2,selectmode="extended",rowseparator="\n",colseparator="\t")
-    tkgrid(tklabel(w41,text="Sampel 1:",font=teks3,bg="#ebe1d1"),tabelp1,tklabel(w41,text="Sampel 2:",font=teks3,bg="#ebe1d1"),tabelp2,sticky="n")
+    tkgrid(tklabel(w41,text="Sampel 1:",font=teks3,bg = getOption("Rgui.theme_bl")$secondary),tabelp1,tklabel(w41,text="Sampel 2:",font=teks3,bg = getOption("Rgui.theme_bl")$secondary),tabelp2,sticky="n")
     
     outputmanualv1 = function()
     {
@@ -1473,10 +1642,10 @@ manualvar2 = function()
       
       if(pvalue<alpha)
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1492,10 +1661,10 @@ manualvar2 = function()
       
       else
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1508,9 +1677,9 @@ manualvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg="#c9a98d")
+      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w411,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w411,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     outputmanualv2 = function()
@@ -1535,10 +1704,10 @@ manualvar2 = function()
       
       if(pvalue<(alpha/2))
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1555,10 +1724,10 @@ manualvar2 = function()
       
       else
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1572,9 +1741,9 @@ manualvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg="#c9a98d")
+      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w411,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w411,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     outputmanualv3 = function()
@@ -1597,10 +1766,10 @@ manualvar2 = function()
       
       if(pvalue<alpha)
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1616,10 +1785,10 @@ manualvar2 = function()
       
       else
       {
-        w411 = tktoplevel(bg="#d3c3b2")
+        w411 = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(w411) = "Hasil Analisis Data"
-        insert = tktext(w411,font=teks2,width=82,height=12,bg="#d3c3b2")
-        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(w411,font=teks2,width=82,height=12,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(w411,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1632,16 +1801,16 @@ manualvar2 = function()
      Keputusan\t\t: Terima H0
      Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg="#c9a98d")
+      tombol=tkbutton(w411,text="Kembali",command=function()tkdestroy(w411),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(w411,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(w411,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
-    tkgrid(tklabel(w41,text="",bg="#ebe1d1"))
-    tombolkiri =tkbutton(w41,text="Sisi Kiri",command = function()outputmanualv1(),bg="#ebe1d1")
+    tkgrid(tklabel(w41,text="",bg = getOption("Rgui.theme_bl")$secondary))
+    tombolkiri =tkbutton(w41,text="Sisi Kiri",command = function()outputmanualv1(),bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombolkiri,sticky="news")
-    tombolkanan=tkbutton(w41,text="2 Sisi",command=function()outputmanualv2(),bg="#ebe1d1")
+    tombolkanan=tkbutton(w41,text="2 Sisi",command=function()outputmanualv2(),bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombolkanan,sticky="news")
-    tombolkanan=tkbutton(w41,text="Sisi Kanan",command=function()outputmanualv3(),bg="#ebe1d1")
+    tombolkanan=tkbutton(w41,text="Sisi Kanan",command=function()outputmanualv3(),bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombolkanan,sticky="news")
     
   }
@@ -1653,19 +1822,19 @@ tkadd(sub_m1.2, "cascade", label="Import Data", menu=sub2_m1.2)
 
 import2pop = function()
 {
-  jendelaimport2 = tktoplevel(bg="#c9a98d")
+  jendelaimport2 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(jendelaimport2) = "Import Data"
-  tkgrid(tklabel(jendelaimport2, text="Import Data SPSS Pengujian Hipotesis Variansi Dua Populasi", font = teks1,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport2,text="Pastikan data anda berupa SPSS",font=teks3,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2, text="Import Data SPSS Pengujian Hipotesis Variansi Dua Populasi", font = teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport2,text="Pastikan data anda berupa SPSS",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   alphaa = tclVar(" ")
-  eb4 = tkentry(jendelaimport2,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport2,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb4 = tkentry(jendelaimport2,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport2,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb4)
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   tkgrid(tkbutton(jendelaimport2,text="Import",command = function()import2()))
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   import2 = function()
   {
@@ -1694,10 +1863,10 @@ import2pop = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1715,10 +1884,10 @@ import2pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1734,9 +1903,9 @@ import2pop = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujiduasisi = function()
@@ -1749,10 +1918,10 @@ import2pop = function()
       
       if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1770,10 +1939,10 @@ import2pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1789,9 +1958,9 @@ import2pop = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujisisikanan = function()
@@ -1804,10 +1973,10 @@ import2pop = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1825,10 +1994,10 @@ import2pop = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1844,18 +2013,18 @@ import2pop = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
-    tombollihat = tkbutton(jendelaimport2,text="Lihat Data",command = lihatdata,bg="#ebe1d1")
+    tombollihat = tkbutton(jendelaimport2,text="Lihat Data",command = lihatdata,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombollihat)
-    tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+    tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
     
-    bkiri =tkbutton(jendelaimport2,text="Sisi Kiri",command = ujisisikiri,bg="#ebe1d1")
-    b2sisi=tkbutton(jendelaimport2,text="2 Sisi",command = ujiduasisi,bg="#ebe1d1")
-    bkanan=tkbutton(jendelaimport2,text="Sisi Kanan",command = ujisisikanan,bg="#ebe1d1")
+    bkiri =tkbutton(jendelaimport2,text="Sisi Kiri",command = ujisisikiri,bg = getOption("Rgui.theme_bl")$secondary)
+    b2sisi=tkbutton(jendelaimport2,text="2 Sisi",command = ujiduasisi,bg = getOption("Rgui.theme_bl")$secondary)
+    bkanan=tkbutton(jendelaimport2,text="Sisi Kanan",command = ujisisikanan,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(bkiri,sticky="news")
     tkgrid(b2sisi,sticky="news")
     tkgrid(bkanan,sticky="news")
@@ -1865,19 +2034,19 @@ tkadd(sub2_m1.2, "command", label="SPSS (.sav)", command=function()import2pop())
 
 import2popex = function()
 {
-  jendelaimport2 = tktoplevel(bg="#c9a98d")
+  jendelaimport2 = tktoplevel(bg = getOption("Rgui.theme_bl")$background)
   tktitle(jendelaimport2) = "Import Data"
-  tkgrid(tklabel(jendelaimport2, text="Import Data Excel Pengujian Hipotesis Variansi Dua Populasi", font = teks1,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport2,text="Pastikan format data anda berupa .xlsx",font=teks3,bg="#c9a98d"),sticky="news")
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2, text="Import Data Excel Pengujian Hipotesis Variansi Dua Populasi", font = teks1,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport2,text="Pastikan format data anda berupa .xlsx",font=teks3,bg = getOption("Rgui.theme_bl")$background),sticky="news")
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   alphaa = tclVar(" ")
-  eb4 = tkentry(jendelaimport2,width="20",textvariable=alphaa,bg="#d3c3b2")
-  tkgrid(tklabel(jendelaimport2,text="Alpha (dalam %) :",font=teks2,bg="#c9a98d"),sticky="news")
+  eb4 = tkentry(jendelaimport2,width="20",textvariable=alphaa,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelaimport2,text="Alpha (dalam %) :",font=teks2,bg = getOption("Rgui.theme_bl")$background),sticky="news")
   tkgrid(eb4)
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   tkgrid(tkbutton(jendelaimport2,text="Import",command = function()import2()))
-  tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+  tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
   
   import2 = function()
   {
@@ -1907,10 +2076,10 @@ import2popex = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1928,10 +2097,10 @@ import2popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1947,9 +2116,9 @@ import2popex = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujiduasisi = function()
@@ -1962,10 +2131,10 @@ import2popex = function()
       
       if(pvalue<(alpha/2))
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -1983,10 +2152,10 @@ import2popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -2002,9 +2171,9 @@ import2popex = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
     ujisisikanan = function()
@@ -2017,10 +2186,10 @@ import2popex = function()
       
       if(pvalue<alpha)
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -2038,10 +2207,10 @@ import2popex = function()
       }
       else
       {
-        jendelaoutput = tktoplevel(bg="#d3c3b2")
+        jendelaoutput = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
         tktitle(jendelaoutput) = "Hasil Analisis Data"
-        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg="#d3c3b2")
-        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg="#d3c3b2"))
+        insert = tktext(jendelaoutput,font=teks2,width=82,height=17,bg = getOption("Rgui.theme_bl")$primary)
+        tkgrid(tklabel(jendelaoutput,text="Hasil Analisis Data",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
         tkgrid(insert)
         tkinsert(insert,"end",paste("1. Hipotesis
      ",h0,"
@@ -2057,18 +2226,18 @@ import2popex = function()
    Keputusan\t\t: Terima H0
    Kesimpulan\t\t:",h0))
       }
-      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg="#c9a98d")
+      tombol=tkbutton(jendelaoutput,text="Kembali",command=function()tkdestroy(jendelaoutput),bg = getOption("Rgui.theme_bl")$background)
       tkgrid(tombol)
-      tkgrid(tklabel(jendelaoutput,text=" ",bg="#d3c3b2"))
+      tkgrid(tklabel(jendelaoutput,text=" ",bg = getOption("Rgui.theme_bl")$primary))
     }
     
-    tombollihat = tkbutton(jendelaimport2,text="Lihat Data",command = lihatdata,bg="#ebe1d1")
+    tombollihat = tkbutton(jendelaimport2,text="Lihat Data",command = lihatdata,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(tombollihat)
-    tkgrid(tklabel(jendelaimport2,text=" ",bg="#c9a98d"))
+    tkgrid(tklabel(jendelaimport2,text=" ",bg = getOption("Rgui.theme_bl")$background))
     
-    bkiri =tkbutton(jendelaimport2,text="Sisi Kiri",command = ujisisikiri,bg="#ebe1d1")
-    b2sisi=tkbutton(jendelaimport2,text="2 Sisi",command = ujiduasisi,bg="#ebe1d1")
-    bkanan=tkbutton(jendelaimport2,text="Sisi Kanan",command = ujisisikanan,bg="#ebe1d1")
+    bkiri =tkbutton(jendelaimport2,text="Sisi Kiri",command = ujisisikiri,bg = getOption("Rgui.theme_bl")$secondary)
+    b2sisi=tkbutton(jendelaimport2,text="2 Sisi",command = ujiduasisi,bg = getOption("Rgui.theme_bl")$secondary)
+    bkanan=tkbutton(jendelaimport2,text="Sisi Kanan",command = ujisisikanan,bg = getOption("Rgui.theme_bl")$secondary)
     tkgrid(bkiri,sticky="news")
     tkgrid(b2sisi,sticky="news")
     tkgrid(bkanan,sticky="news")
@@ -2083,10 +2252,10 @@ tkadd(sub2_m1.2, "command", label="Excel (.xlsx)", command=function()import2pope
 #Petunjuk Pengujian Hipotesis Variansi
 petunjuk_varians<-function()
 {
-  jendelapetunjukvar = tktoplevel(bg="#d3c3b2")
+  jendelapetunjukvar = tktoplevel(bg = getOption("Rgui.theme_bl")$primary)
   tkwm.title(jendelapetunjukvar,"Petunjuk Pengujian Hipotesis Varians")
-  insertpetunjukvar=tktext(jendelapetunjukvar,font = teks2,width=85,height=32,bg="#d3c3b2")
-  tkgrid(tklabel(jendelapetunjukvar,text="Petunjuk Pengujian Hipotesis Variansi",font=teks1,bg="#d3c3b2"))
+  insertpetunjukvar=tktext(jendelapetunjukvar,font = teks2,width=85,height=32,bg = getOption("Rgui.theme_bl")$primary)
+  tkgrid(tklabel(jendelapetunjukvar,text="Petunjuk Pengujian Hipotesis Variansi",font=teks1,bg = getOption("Rgui.theme_bl")$primary))
   tkgrid(insertpetunjukvar)
   tkinsert(insertpetunjukvar,"end",paste(
     "1) Pengujian Hipotesis Variansi Satu Populasi
@@ -2121,8 +2290,6 @@ petunjuk_varians<-function()
          - klik lihat data untuk memastikan data
          - klik salah satu uji hipotesis untuk menampilkan output
 "))
-  back = tkbutton(jendelapetunjukvar, text="Kembali",command = function()tkdestroy(jendelapetunjukvar),bg="#c9a98d")
+  back = tkbutton(jendelapetunjukvar, text="Kembali",command = function()tkdestroy(jendelapetunjukvar),bg = getOption("Rgui.theme_bl")$background)
   tkgrid(back)
 }
-
-tkadd(topmenu4, "command", label="Pengujian Hipotesis Variansi", command=petunjuk_varians)		
