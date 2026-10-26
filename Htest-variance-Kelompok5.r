@@ -6,10 +6,16 @@
 library(tcltk)
 library(readxl)
 
-# Wanra Global ; pakai 60-30-10 rule
-tcl("set", ":: primary_color", ) # or White for text
-tcl("set", ":: 2nd_color", )
-tcl("set", ":: 3rd_color", )
+# Wanra Global 
+options(Rgui.theme_bl = list(
+  primary   = "#dce3ec",
+  secondary = "#294563",
+  background= "#f5f7fa",
+  border    = "#bcc3cc"
+))
+
+# Font Global
+tcl("options", "add", )
 
 #=============================================================================
 # 1. Struktur utama
@@ -17,37 +23,142 @@ tcl("set", ":: 3rd_color", )
 
 # 1.1 Main window
 Start_open <- function() {
-  Start_page <- tktoplevel()
+  Main_page <- tktoplevel()
 
-  # Title bar
-  tktitle(Start_page) <- "... - Uji Hipotesis μ 1|2 Populasi"
-  tkconfigure(Start_page, background = tclvalue(tcl("set", "::primary_color")))
+  # Title Bar
+  tkwm.title(Main_page,  "... - Uji Hipotesis μ 1|2 Populasi")
 
-  #  Frame size
-  tkwm.geometry(Start_page, "")
-  tkwm.minsize(Start_page, "")
-  tkwm.maxsize(Start_page, "")
+  # Main window setting (color, frame size)
+  tkconfigure(Main_page, background = getOption("Rgui.theme_bl")$primary)
+  tkwm.geometry(Main_page, "1050x800")
+  tkwm.minsize(Main_page, "1050x800")
+  tkwm.maxsize(Main_page, "1050x800")
 
-  # 1.2 Main window buttons
 
-button_header <- tkframe((Start_page, background = tclvalue(tcl("set", "::primary_color")))
+  # 1.2 topmenu
+
+    # 1.2.1 topmenu member
+  Submenu_container <- list(
+  
+  # File 
+  label = "File",
+  children = list(
+    list(
+      label = "Import Data",
+      children = list(
+        list(label = "Excel", command = "sumvar1"),
+        list(label = "CSV", command = "manualvar1"),
+        list(label = "SPSS", command = "import1pop"),
+		list(label = "txt", command = "")
+        )
+     )
+  ),
+
+  # Uji hipotesis var
+  label = "Pengujian Hipotesis",
+  children = list(
+    list(
+      label = "Variansi",
+      children = list(
+		list(label = "Satu Populasi", command= "..."),
+		list(label = "Dua Populasi", command= "...")
+#        list(label = "Summary", command = "sumvar1"),
+#       list(label = "Input Data", command = "manualvar1"),
+#        list(label = "Import Data SPSS", command = "import1pop")
+		  )
+		)
+      ),
+
+  # Materi 
+  label = "Materi",
+  children = list(
+    list(
+      label = "Import Data",
+      children = list(
+        list(label = "Excel", command = "sumvar1"),
+        list(label = "CSV", command = "manualvar1"),
+        list(label = "SPSS", command = "import1pop"),
+		list(label = "txt", command = "")
+      )
+    )
+  ),
+
+  # View 
+  label = "View",
+  children = list(
+    list(label = "Console", command = ""),
+    list(label = "Switch Theme", command = "")  
+    ),
+
+  # Petunjuk 
+  label = "Petunjuk",
+  children = list(
+    list(
+      label = "Uji Hipotesis",
+      children = list(
+        list(label = "Variansi", command = "sumvar1")
+      )
+    )
+  ),
+
+  # Tentang kami 
+  label = "Tentang kami",
+  children = list(
+    list(label = "Developer", command = "..."),
+    list(label = "Mata kuliah", command = "...")
+    )
+),
+
+
+    # 1.2.2 topmenu built behavior function
+    # Fungsi untuk merakit menu dari struktur data
+  build_menu <- function(parent_menu, structure) {
+  for (item in structure) {
+    if (!is.null(item$children)) {
+      # Jika punya anak (submenu), buat cascade
+      submenu <- tkmenu(parent_menu, tearoff = FALSE)
+      tkadd(parent_menu, "cascade", label = item$label, menu = submenu)
+      # Panggil fungsi ini lagi untuk merakit isi submenu
+      build_menu(submenu, item$children)
+    } else {
+      # Jika tidak punya submenu, ini tombol, atau click run command
+      if (!is.null(item$command)) {
+        # Simpan nama fungsi ke variabel lokal
+        func_name <- item$command 
+        
+        # Tambahkan ke menu Tk
+        tkadd(parent_menu, "command", 
+              label = item$label, 
+              command = function() {
+                # get() akan mencari fungsi di memori SAAT TOMBOL DIKLIK
+                do.call(get(func_name, envir = .GlobalEnv), list())
+              })
+      }
+    }
+  }
+
+
+  # 1.3 Main window guide
+
+<- tkframe(Main_page,)
+
   tkpack(button_header, padx = 20, pady = 40)
 
   # Button Header
-  tkpack(tklabel(
+  tkpack(tklabel(Main_page, background = getOption("Rgui.theme_bl")$primary))
     frame_atas,
     text = "...",
     font = "Helvetica 20 bold",
-    background = tclvalue(tcl("set", "::primary_color")),
-    foreground = tclvalue(tcl("set", "::2nd_color"))
+    background = tclvalue(tcl("set", "::background")),
+    foreground = tclvalue(tcl("set", "::secondary"))
   ))
   tkpack(
     tklabel(
       frame_atas,
       text = "...",
       font = "Helvetica 10 italic",
-    background = tclvalue(tcl("set", "::primary_color")),
-    foreground = tclvalue(tcl("set", "::2nd_color"))
+    background = tclvalue(tcl("set", "::background")),
+    foreground = tclvalue(tcl("set", "::secondary"))
     ),
     pady = 5
   )
@@ -56,6 +167,7 @@ button_header <- tkframe((Start_page, background = tclvalue(tcl("set", "::primar
 #=============================================================================
 # 2. Input Data
 #=============================================================================
+
 
 #=============================================================================
 # 3.  Pengujian Hipotesis Var 1-population
@@ -2012,4 +2124,5 @@ petunjuk_varians<-function()
   back = tkbutton(jendelapetunjukvar, text="Kembali",command = function()tkdestroy(jendelapetunjukvar),bg="#c9a98d")
   tkgrid(back)
 }
+
 tkadd(topmenu4, "command", label="Pengujian Hipotesis Variansi", command=petunjuk_varians)		
