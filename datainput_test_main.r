@@ -407,7 +407,7 @@ Start_open <- function() {
 
   btn_print <- tkbutton(
     btn_frame,
-    text = "Print Data (Console)",
+    text = "Save Data",
     command = function() {
       cat("\n=== APP_STATE$data ===\n")
       print(APP_STATE$data)
