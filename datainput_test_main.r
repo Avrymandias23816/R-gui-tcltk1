@@ -3,9 +3,9 @@
 # ==============================================================================
 
 # to-do:
-# 1. implement fungsi buat uji hipotesis
+# 1. implement fungsi buat uji hipotesis [V]
 # 2. Cek error stat kalau non numeric di input
-# 3. Modifikasi window uji hipotesis var
+# 3. Modifikasi window uji hipotesis var [V]
 # 4. Window petunjuk dan tentang kami, sama topmenu nya
 # 5. Fungsi Error state output buat gampang debbuging (low prio seng penting mlaku)
 
@@ -23,6 +23,9 @@ options(
   )
 )
 
+# Base Theme
+tcl("ttk::style", "theme", "use", "default")
+
 # Warna Selection/Highlight Tabel pakai Global Color
 theme_colors <- getOption("Rgui.theme_bl")
 
@@ -39,6 +42,7 @@ APP_STATE$variable_info <- data.frame(
   label = character(),
   stringsAsFactors = FALSE
 )
+
 APP_STATE$alpha <- 0.05
 APP_STATE$alternative <- "two.sided"
 
@@ -56,7 +60,7 @@ sync_table_to_data <- function(state) {
 
   # Cari batas maksimal baris dan kolom yang terisi
   for (j in 1:30) {
-    for (i in 1:100) {
+    for (i in 1:1000) {
       val <- state$data_array[[i, j]]
       if (!is.null(val)) {
         val_str <- as.character(val)
@@ -104,7 +108,7 @@ sync_table_to_data <- function(state) {
 
       df[i, j] <- if (val_str == "") NA else val_str
     }
-  } # <--- INI KURUNG KURAWAL YANG HILANG SEBELUMNYA
+  }
 
   # Konversi otomatis ke numerik jika memungkinkan agar uji statistik jalan
   for (j in 1:max_col) {
@@ -277,7 +281,7 @@ reset_app_state <- function(state) {
     )
 
     # Hanya hapus dari j=1 ke atas, j=0 (kolom nomor) dibiarkan
-    for (i in 0:100) {
+    for (i in 0:1000) {
       for (j in 1:30) {
         state$data_array[[i, j]] <- NULL
       }
@@ -305,7 +309,7 @@ create_data_view <- function(parent, state) {
 
       # Nomor urut dan Header pojok
       data_array[[0, 0]] <- "Var"
-      for (i in 1:100) {
+      for (i in 1:1000) {
         data_array[[i, 0]] <- as.character(i)
       }
 
@@ -333,7 +337,7 @@ create_data_view <- function(parent, state) {
         frame_data,
         "table",
         variable = data_array,
-        rows = 100,
+        rows = 1001, # 1000 baris data + 1 baris header
         cols = 30,
         titlerows = 1,
         titlecols = 1,
@@ -344,7 +348,9 @@ create_data_view <- function(parent, state) {
         foreground = "#000000",
         multiline = TRUE,
         rowseparator = "\n",
-        colseparator = "\t"
+        colseparator = "\t",
+        sparsearray = TRUE,
+        cache = TRUE # Stabilitas scrollbar
       )
 
       # ENABLE MOUSE SCROLL WHEEL (Cross-Platform)
@@ -354,12 +360,14 @@ create_data_view <- function(parent, state) {
         "<MouseWheel>",
         "%W yview scroll [expr {- (%D / 120) * 2}] units"
       )
+
       tcl(
         "bind",
         data_table,
         "<Shift-MouseWheel>",
         "%W xview scroll [expr {- (%D / 120) * 2}] units"
       )
+
       tcl("bind", data_table, "<Button-4>", "%W yview scroll -2 units")
       tcl("bind", data_table, "<Button-5>", "%W yview scroll 2 units")
 
@@ -373,7 +381,7 @@ create_data_view <- function(parent, state) {
         "configure",
         "sel",
         "-background",
-        theme_colors$border, # Diubah ke background agar teks putih tidak hilang
+        theme_colors$border,
         "-foreground",
         "#ffffff"
       )
@@ -389,11 +397,10 @@ create_data_view <- function(parent, state) {
         "-foreground",
         "black",
         "-relief",
-        "ridge"
+        "groove"
       )
 
       # Warna header
-      # Gunakan tag "title" untuk mengatur warna header (baris & kolom)
       tcl(
         data_table,
         "tag",
@@ -404,34 +411,76 @@ create_data_view <- function(parent, state) {
         "-foreground",
         theme_colors$border,
         "-font",
-        "SansSerif 9",
+        "Helvetica 9",
         "-relief",
         "flat"
       )
 
-      # Scrollbar
-      xscr <- tkscrollbar(
+      # Scrollbar (ttk::scrollbar TIDAK punya opsi -width, itu hanya ada
+      # di classic scrollbar. Jadi width dihilangkan.)
+      xscr <- ttkscrollbar(
         frame_data,
         orient = "horizontal",
-        repeatinterval = 5,
         command = function(...) tkxview(data_table, ...)
       )
-      yscr <- tkscrollbar(
+      yscr <- ttkscrollbar(
         frame_data,
         orient = "vertical",
-        repeatinterval = 5,
         command = function(...) tkyview(data_table, ...)
       )
-      tkconfigure(data_table, xscrollcommand = function(...) tkset(xscr, ...))
-      tkconfigure(data_table, yscrollcommand = function(...) tkset(yscr, ...))
+
+      # Hubungkan viewport Tktable ke scrollbar agar posisi thumb sinkron
+      tkconfigure(
+        data_table,
+        xscrollcommand = function(...) tkset(xscr, ...),
+        yscrollcommand = function(...) tkset(yscr, ...)
+      )
+
+      # Konfigurasi style scrollbar
+      for (orient in c("Vertical", "Horizontal")) {
+        tcl(
+          "ttk::style",
+          "configure",
+          paste0(orient, ".TScrollbar"),
+          "-background",
+          theme_colors$secondary, # Warna thumb (slider)
+          "-troughcolor",
+          theme_colors$primary, # <-- Warna latar (trough)
+          "-arrowcolor",
+          "#ffffff", # Warna panah
+          "-bordercolor",
+          theme_colors$border,
+          "-lightcolor",
+          theme_colors$primary,
+          "-darkcolor",
+          theme_colors$border,
+          "-arrowsize",
+          20
+        )
+
+        # Efek hover/press
+        tcl(
+          "ttk::style",
+          "map",
+          paste0(orient, ".TScrollbar"),
+          "-background",
+          sprintf(
+            "active %s pressed %s !active %s",
+            theme_colors$primary,
+            theme_colors$border,
+            theme_colors$secondary
+          )
+        )
+      }
 
       # Grid Layout
       tkgrid(data_table, row = 0, column = 0, sticky = "nsew")
       tkgrid(yscr, row = 0, column = 1, sticky = "ns")
       tkgrid(xscr, row = 1, column = 0, sticky = "ew")
+
+      # Hanya tabel yang boleh membesar (weight = 1)
       tkgrid.rowconfigure(frame_data, 0, weight = 1)
       tkgrid.columnconfigure(frame_data, 0, weight = 1)
-
       # Double click header to insert variable name
       tkbind(data_table, "<Double-Button-1>", function() {
         row <- as.integer(tclvalue(tkindex(data_table, "active", "row")))
@@ -448,13 +497,62 @@ create_data_view <- function(parent, state) {
     },
     error = function(e) {
       cat("\n=== ERROR create_data_view ===\n", e$message, "\n")
+      # Tampilkan error sebagai dialog agar tidak silently swallowed
+      tkmessageBox(
+        title = "create_data_view error",
+        message = e$message,
+        icon = "error"
+      )
     }
   )
 }
 
 
+tcl(
+  "ttk::style",
+  "configure",
+  "Custom.TButton",
+  "-background",
+  theme_colors$primary,
+  "-foreground",
+  theme_colors$secondary,
+  "-relief",
+  "flat",
+  "-borderwidth",
+  0,
+  "-lightcolor",
+  theme_colors$primary,
+  "-darkcolor",
+  theme_colors$border,
+  "-padding",
+  6,
+  "-font",
+  "Helvetica 10 bold"
+)
+
+tcl(
+  "ttk::style",
+  "map",
+  "Custom.TButton",
+  "-background",
+  sprintf(
+    "active %s pressed %s !active %s",
+    theme_colors$border,
+    theme_colors$secondary,
+    theme_colors$primary
+  ),
+  "-foreground",
+  sprintf(
+    "active %s pressed %s !active %s",
+    theme_colors$secondary,
+    theme_colors$background,
+    theme_colors$secondary
+  )
+)
+
+
 # ==============================================================================
-# FUNGSI IMPORT FILE (SINKRONISASI DENGAN TABEL)
+# FUNGSI MEMASUKKAN DATA KE TABEL
 # ==============================================================================
 process_imported_df <- function(df, filename) {
   if (ncol(df) == 0) {
@@ -465,45 +563,54 @@ process_imported_df <- function(df, filename) {
     return()
   }
 
-  # 1. Bersihkan tabel dengan NULL (menghilangkan artefak {})
-  for (i in 1:100) {
+  if (is.null(APP_STATE$data_array)) {
+    APP_STATE$data <- df
+    tkmessageBox(
+      message = "Data disimpan di memori, tapi tabel belum siap.",
+      icon = "warning"
+    )
+    return()
+  }
+
+  # 1. Bersihkan tabel lama (GUNAKAN NULL)
+  for (i in 1:1000) {
     for (j in 1:30) {
       APP_STATE$data_array[[i, j]] <- NULL
     }
   }
 
-  # 2. Batasi maksimal 30 kolom dan 100 baris
   max_cols <- min(ncol(df), 30)
-  max_rows <- min(nrow(df), 100)
+  max_rows <- min(nrow(df), 1000)
 
-  # 3. Set nama kolom
+  # 2. Set nama kolom
   for (j in seq_len(max_cols)) {
     col_name <- names(df)[j]
-    if (is.null(col_name) || is.na(col_name) || nchar(col_name) == 0) {
+    if (is.null(col_name) || is.na(col_name) || nchar(trimws(col_name)) == 0) {
       col_name <- paste0("Var", j)
     }
     APP_STATE$data_array[[0, j]] <- col_name
   }
 
-  # 4. HANYA masukkan data yang tidak kosong
+  # 3. Masukkan data
   for (i in seq_len(max_rows)) {
     for (j in seq_len(max_cols)) {
       val <- df[[j]][i]
 
-      # Jika BUKAN NA dan BUKAN string kosong, baru masukkan
-      if (
-        !is.na(val) &&
-          trimws(as.character(val)) != "" &&
-          as.character(val) != "NA"
-      ) {
-        APP_STATE$data_array[[i, j]] <- as.character(val)
+      # Jika NA, jadikan "" untuk pengecekan. Jika ada teks, hapus spasi berlebih.
+      val_str <- if (is.na(val)) "" else trimws(as.character(val))
+
+      # Jika ada isinya (bukan "" dan bukan "NA"), masukkan datanya
+      if (val_str != "" && val_str != "NA") {
+        APP_STATE$data_array[[i, j]] <- val_str
+      } else {
+        # JIKA KOSONG: Biarkan NULL (jangan diisi spasi atau string kosong)
+        APP_STATE$data_array[[i, j]] <- NULL
       }
-      # Jika kosong, biarkan NULL (sudah dibersihkan di langkah 1)
     }
   }
 
-  # 5. Simpan ke APP_STATE$data
   APP_STATE$data <- df
+  tcl("update") # Refresh tabel
 
   tkmessageBox(
     title = "Import Berhasil",
@@ -516,6 +623,102 @@ process_imported_df <- function(df, filename) {
       ncol(df)
     ),
     icon = "info"
+  )
+}
+
+# ==============================================================================
+# FUNGSI FILE IMPORT
+# ==============================================================================
+
+CSV_input <- function() {
+  path <- tclvalue(tkgetOpenFile(
+    title = "Pilih File CSV",
+    filetypes = "{{CSV} {.csv}} {{All Files} *}"
+  ))
+  if (nchar(path) == 0) {
+    return()
+  }
+
+  tryCatch(
+    {
+      # Gunakan header = TRUE agar baris pertama jadi nama kolom
+      df <- read.csv(path, header = TRUE, stringsAsFactors = FALSE)
+      process_imported_df(df, path)
+    },
+    error = function(e) {
+      tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
+    }
+  )
+}
+
+text_input <- function() {
+  path <- tclvalue(tkgetOpenFile(
+    title = "Pilih File Text",
+    filetypes = "{{Text} {.txt}} {{All Files} *}"
+  ))
+  if (nchar(path) == 0) {
+    return()
+  }
+
+  tryCatch(
+    {
+      df <- read.table(path, header = TRUE, stringsAsFactors = FALSE)
+      process_imported_df(df, path)
+    },
+    error = function(e) {
+      tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
+    }
+  )
+}
+
+Excel_input <- function() {
+  path <- tclvalue(tkgetOpenFile(
+    title = "Pilih File Excel",
+    filetypes = "{{Excel} {.xlsx .xls}} {{All Files} *}"
+  ))
+  if (nchar(path) == 0) {
+    return()
+  }
+
+  if (!requireNamespace("readxl", quietly = TRUE)) {
+    tkmessageBox(message = "Package 'readxl' belum terinstall.", icon = "error")
+    return()
+  }
+
+  tryCatch(
+    {
+      # TAMBAHKAN na = c("", "NA") DI SINI
+      df <- readxl::read_excel(path, col_names = TRUE, na = c("", "NA"))
+      process_imported_df(as.data.frame(df), path)
+    },
+    error = function(e) {
+      tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
+    }
+  )
+}
+
+SPSS_input <- function() {
+  path <- tclvalue(tkgetOpenFile(
+    title = "Pilih File SPSS",
+    filetypes = "{{SPSS} {.sav}} {{All Files} *}"
+  ))
+  if (nchar(path) == 0) {
+    return()
+  }
+
+  if (!requireNamespace("haven", quietly = TRUE)) {
+    tkmessageBox(message = "Package 'haven' belum terinstall.", icon = "error")
+    return()
+  }
+
+  tryCatch(
+    {
+      df <- haven::read_sav(path)
+      process_imported_df(as.data.frame(df), path)
+    },
+    error = function(e) {
+      tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
+    }
   )
 }
 
@@ -549,10 +752,6 @@ sumvar1 <- function() {
   tkconfigure(win_1pop, background = getOption("Rgui.theme_bl")$primary)
   tkwm.geometry(win_1pop, "950x800")
   tkwm.minsize(win_1pop, 700, 600)
-
-  # MUST BIAR TIDAK ADA GLITCHING GUI
-  tclServiceMode(FALSE)
-  on.exit(tclServiceMode(TRUE), add = TRUE)
 
   main <- ttkframe(win_1pop, padding = 15)
   tkpack(main, fill = "both", expand = TRUE)
@@ -912,7 +1111,7 @@ sumvar1 <- function() {
         sprintf(
           "%-22s : %g%%\n",
           "Confidence Level",
-          (1 - APP_STATE$alpha) * 100
+          (1 - APP_STATE$alpha) * 1000
         ),
         sprintf(
           "%-22s : [%.4f, %.4f]\n",
@@ -1003,10 +1202,6 @@ sumvar2 <- function() {
   tkconfigure(win_2pop, background = getOption("Rgui.theme_bl")$primary)
   tkwm.geometry(win_2pop, "950x800")
   tkwm.minsize(win_2pop, 700, 600)
-
-  # BIAR TIDAK GLITCH GUINYA
-  tclServiceMode(FALSE)
-  on.exit(tclServiceMode(TRUE), add = TRUE)
 
   main <- ttkframe(win_2pop, padding = 15)
   tkpack(main, fill = "both", expand = TRUE)
@@ -1347,7 +1542,7 @@ sumvar2 <- function() {
         sprintf(
           "%-22s : %g%%\n",
           "Confidence Level",
-          (1 - APP_STATE$alpha) * 100
+          (1 - APP_STATE$alpha) * 1000
         ),
         sprintf(
           "%-22s : [%.4f, %.4f]\n",
@@ -1417,7 +1612,7 @@ sumvar2 <- function() {
 }
 
 # ==============================================================================
-# STRUKTUR TOPMENU & FUNGSI PEMBUAT MENU
+# STRUKTUR TOPMENU
 # ==============================================================================
 Submenu_container <- list(
   list(
@@ -1448,42 +1643,41 @@ Submenu_container <- list(
   )
 )
 
-build_menu <- function(parent_menu, structure) {
+# FUNGSI PEMBUAT MENU KUSTOM
+# 1. Fungsi rekursif untuk mengisi dropdown (isian menu)
+build_dropdown_items <- function(parent_menu, structure) {
+  # TAMBAHKAN BARIS INI:
   theme <- getOption("Rgui.theme_bl")
 
   for (item in structure) {
     if (!is.null(item$children)) {
-      submenu <- tkmenu(parent_menu, tearoff = FALSE)
-
-      # Konfigurasi warna untuk dropdown menu
-      tkconfigure(
-        submenu,
+      submenu <- tkmenu(
+        parent_menu,
+        tearoff = FALSE,
+        background = theme$background,
+        foreground = theme$secondary,
         activebackground = theme$secondary,
         activeforeground = "#ffffff",
-        selectcolor = theme$secondary
+        font = "Helvetica 9"
       )
 
-      # Konfigurasi warna untuk item menu (cascade)
-      tkadd(
-        parent_menu,
-        "cascade",
-        label = item$label,
-        menu = submenu,
-        activebackground = theme$secondary,
-        activeforeground = "#ffffff"
-      )
+      # Tambahkan submenu sebagai item cascade
+      tkadd(parent_menu, "cascade", label = item$label, menu = submenu)
 
-      build_menu(submenu, item$children)
+      # Panggil fungsi secara rekursif untuk submenu di bawahnya
+      build_dropdown_items(submenu, item$children)
     } else if (!is.null(item$command)) {
       local({
         func_name <- item$command
         label_txt <- item$label
 
-        # Konfigurasi warna untuk item menu (command)
+        # Tambahkan item command
         tkadd(
           parent_menu,
           "command",
           label = label_txt,
+          background = theme$background,
+          foreground = theme$secondary,
           activebackground = theme$secondary,
           activeforeground = "#ffffff",
           command = function() {
@@ -1498,6 +1692,61 @@ build_menu <- function(parent_menu, structure) {
           }
         )
       })
+    }
+  }
+}
+
+# 2. Fungsi utama untuk membuat Menu Bar Kustom
+create_custom_menubar <- function(parent_window, structure) {
+  # TAMBAHKAN BARIS INI:
+  theme <- getOption("Rgui.theme_bl")
+
+  # Buat frame sebagai latar belakang menu bar
+  menubar_frame <- tkframe(
+    parent_window,
+    background = theme$primary,
+    highlightthickness = 1,
+    highlightbackground = theme$border,
+    highlightcolor = theme$border,
+    borderwidth = 0,
+    relief = "flat"
+  )
+  tkpack(menubar_frame, fill = "x", side = "top")
+
+  for (top_item in structure) {
+    # Buat tombol menu atas
+    mb <- tkmenubutton(
+      menubar_frame,
+      text = top_item$label,
+      background = theme$primary,
+      foreground = theme$secondary,
+      highlightthickness = 1,
+      highlightbackground = theme$background,
+      highlightcolor = theme$background,
+      borderwidth = 0,
+      activebackground = theme$secondary,
+      activeforeground = "#ffffff",
+      font = "Helvetica 9",
+      relief = "flat",
+      padx = 15,
+      pady = 4
+    )
+    tkpack(mb, side = "left")
+
+    # Buat menu dropdown untuk tombol tersebut
+    dropdown <- tkmenu(
+      mb,
+      tearoff = FALSE,
+      background = theme$background,
+      foreground = theme$secondary,
+      activebackground = theme$secondary,
+      activeforeground = "#ffffff"
+    )
+    tkconfigure(mb, menu = dropdown)
+
+    # Isi menu dropdown-nya
+    if (!is.null(top_item$children)) {
+      build_dropdown_items(dropdown, top_item$children)
     }
   }
 }
@@ -1575,9 +1824,7 @@ Start_open <- function() {
   tkwm.minsize(Main_page, 800, 600)
 
   # Topmenu
-  topmenu <- tkmenu(Main_page, tearoff = FALSE)
-  tkconfigure(Main_page, menu = topmenu)
-  build_menu(topmenu, Submenu_container)
+  create_custom_menubar(Main_page, Submenu_container)
 
   # Main Container (for table)
   main_container <- tkframe(
@@ -1593,13 +1840,77 @@ Start_open <- function() {
   )
   tkpack(btn_frame, fill = "x", pady = 5)
 
-  # Save data button feedback
-  btn_print <- tkbutton(
+  # 1. Konfigurasi Warna & Desain Dasar
+  tcl(
+    "ttk::style",
+    "configure",
+    "Custom.TButton",
+    "-background",
+    theme_colors$primary,
+    "-foreground",
+    theme_colors$secondary,
+    "-relief",
+    "flat",
+    "-borderwidth",
+    0.5, # Ketebalan garis border
+    "-bordercolor",
+    theme_colors$border, # Warna garis (pakai warna border Anda, bukan primary)
+    "-lightcolor",
+    theme_colors$primary,
+    "-darkcolor",
+    theme_colors$border,
+    "-padding",
+    6,
+    "-font",
+    "Helvetica 10"
+  )
+
+  # 2. Konfigurasi Efek Interaktif (Hover / Active, dan Pressed)
+  tcl(
+    "ttk::style",
+    "map",
+    "Custom.TButton",
+    "-background",
+    sprintf(
+      "active %s pressed %s !active %s",
+      theme_colors$border,
+      theme_colors$secondary,
+      theme_colors$primary
+    ),
+    "-foreground",
+    sprintf(
+      "active %s pressed %s !active %s",
+      theme_colors$secondary,
+      theme_colors$background,
+      theme_colors$secondary
+    ),
+    # Pastikan border tetap terlihat saat di-hover
+    "-bordercolor",
+    sprintf(
+      "active %s pressed %s !active %s",
+      theme_colors$secondary, # Warna border saat hover
+      theme_colors$secondary, # Warna border saat ditekan
+      theme_colors$border # Warna border normal
+    )
+  )
+
+  # 1. Tombol Save Data
+  # Frame sebagai border
+  border_print <- tkframe(
     btn_frame,
+    borderwidth = 1, # Ketebalan border
+    relief = "solid", # Gaya garis solid
+    background = theme_colors$border # Warna border (biru gelap)
+  )
+  tkpack(border_print, side = "left", padx = 5)
+
+  # Tombol di dalam frame
+  btn_print <- ttkbutton(
+    border_print,
     text = "Save Data",
+    style = "Custom.TButton",
     command = function() {
       sync_table_to_data(APP_STATE)
-
       cat("\n=== APP_STATE$data ===\n")
       print(APP_STATE$data)
       cat("\n=== APP_STATE$variable_info ===\n")
@@ -1625,12 +1936,28 @@ Start_open <- function() {
       }
     }
   )
-  tkpack(btn_print, side = "left", padx = 5)
+  tkpack(btn_print, fill = "both", expand = TRUE)
 
-  btn_reset <- tkbutton(btn_frame, text = "Reset Data", command = function() {
-    reset_app_state(APP_STATE)
-  })
-  tkpack(btn_reset, side = "left", padx = 5)
+  # 2. Tombol Reset Data
+  # Frame sebagai border
+  border_reset <- tkframe(
+    btn_frame,
+    borderwidth = 1,
+    relief = "solid",
+    background = theme_colors$border
+  )
+  tkpack(border_reset, side = "left", padx = 5)
+
+  # Tombol di dalam frame
+  btn_reset <- ttkbutton(
+    border_reset,
+    text = "Reset Data",
+    style = "Custom.TButton",
+    command = function() {
+      reset_app_state(APP_STATE)
+    }
+  )
+  tkpack(btn_reset, fill = "both", expand = TRUE)
 
   # Render table ke main container
   create_data_view(main_container, APP_STATE)
