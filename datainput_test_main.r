@@ -4,10 +4,10 @@
 
 # to-do:
 # 1. implement fungsi buat uji hipotesis [V]
-# 2. Cek error stat kalau non numeric di input
+# 2. Cek error stat kalau non numeric di input [V]
 # 3. Modifikasi window uji hipotesis var [V]
-# 4. Window petunjuk dan tentang kami, sama topmenu nya
-# 5. Fungsi Error state output buat gampang debbuging (low prio seng penting mlaku)
+# 4. Window petunjuk dan tentang kami, sama topmenu nya [V]
+# 5. Fungsi Error state output buat gampang debbuging [V]
 
 library(tcltk)
 library(tcltk2)
@@ -18,8 +18,10 @@ options(
   Rgui.theme_bl = list(
     primary = "#dce3ec",
     secondary = "#294563",
+    teritary = "#ffffff",
     background = "#f5f7fa",
-    border = "#bcc3cc"
+    border = "#bcc3cc",
+    autofont = "black"
   )
 )
 
@@ -55,30 +57,60 @@ sync_table_to_data <- function(state) {
     return()
   }
 
-  max_row <- 0
   max_col <- 0
 
-  # Cari batas maksimal baris dan kolom yang terisi
+  # optimization - Cek baris header (Baris 0) terlebih dahulu
+  # menentukan kolom yang aktif so perlu diperiksa datanya
   for (j in 1:30) {
-    for (i in 1:1000) {
-      val <- state$data_array[[i, j]]
-      if (!is.null(val)) {
-        val_str <- as.character(val)
-        if (nchar(trimws(val_str)) > 0) {
-          if (i > max_row) {
-            max_row <- i
-          }
-          if (j > max_col) max_col <- j
-        }
+    val_header <- state$data_array[[0, j]]
+    if (!is.null(val_header) && nchar(trimws(as.character(val_header))) > 0) {
+      max_col <- j
+    }
+  }
+
+  # if no header, cek apakah ada pemasukkan data tanpa header di baris 1
+  if (max_col == 0) {
+    for (j in 1:30) {
+      val_data <- state$data_array[[1, j]]
+      if (!is.null(val_data) && nchar(trimws(as.character(val_data))) > 0) {
+        max_col <- j
       }
     }
   }
 
-  if (max_row == 0 || max_col == 0) {
+  # Jika tetap tidak ada header maupun data, langsung kembalikan dataframe kosong
+  if (max_col == 0) {
     state$data <- data.frame()
     return()
   }
 
+  # Cari batas baris maksimal, HANYA pada kolom yang memiliki header/aktif
+  max_row <- 0
+  for (i in 1:3000) {
+    row_has_data <- FALSE
+    for (j in 1:max_col) {
+      val <- state$data_array[[i, j]]
+      if (!is.null(val)) {
+        val_str <- as.character(val)
+        if (nchar(trimws(val_str)) > 0) {
+          row_has_data <- TRUE
+          break # Keluar dari loop kolom jika satu sel di baris ini ada isinya
+        }
+      }
+    }
+
+    # Jika ada data di baris ini, catat sebagai baris maksimal
+    if (row_has_data) {
+      max_row <- i
+    }
+  }
+
+  if (max_row == 0) {
+    state$data <- data.frame()
+    return()
+  }
+
+  # Ekstrak Data (Looping hanya sampai max_row dan max_col)
   df <- data.frame(
     matrix(NA, nrow = max_row, ncol = max_col),
     stringsAsFactors = FALSE
@@ -110,8 +142,22 @@ sync_table_to_data <- function(state) {
     }
   }
 
+  # =========================================================================
   # Konversi otomatis ke numerik jika memungkinkan agar uji statistik jalan
+  # =========================================================================
   for (j in 1:max_col) {
+    col_name <- names(df)[j]
+
+    # TAMBAHAN BARU: Cek apakah user sudah mendeklarasikan tipe kolom ini
+    declared_type <- state$variable_info$type[
+      state$variable_info$name == col_name
+    ]
+
+    # Jika dideklarasikan sebagai String atau Categorical, JANGAN diubah ke numerik
+    if (length(declared_type) > 0 && grepl("character|factor", declared_type)) {
+      next
+    }
+
     non_na <- df[[j]][!is.na(df[[j]])]
     if (length(non_na) > 0) {
       num_vals <- suppressWarnings(as.numeric(non_na))
@@ -193,9 +239,14 @@ open_column_properties <- function(col_idx, state, data_array) {
     tk2combobox(
       frame_form,
       textvariable = var_type,
-      values = c("numeric", "character", "factor", "logical"),
+      values = c(
+        "numeric (Scale)",
+        "character (String)",
+        "factor (Categorical)",
+        "logical (Boolean)"
+      ),
       state = "readonly",
-      width = 18
+      width = 22 # Sedikit dilebarkan agar teks muat
     ),
     row = 1,
     column = 1,
@@ -281,13 +332,17 @@ reset_app_state <- function(state) {
     )
 
     # Hanya hapus dari j=1 ke atas, j=0 (kolom nomor) dibiarkan
-    for (i in 0:1000) {
+    for (i in 0:3000) {
       for (j in 1:30) {
         state$data_array[[i, j]] <- NULL
       }
     }
 
-    tkmessageBox(title = "Sukses", message = "Data di-reset!", icon = "info")
+    tkmessageBox(
+      title = "Sukses",
+      message = "Data berhasil dibersihkan!",
+      icon = "info"
+    )
   }
 }
 
@@ -309,7 +364,7 @@ create_data_view <- function(parent, state) {
 
       # Nomor urut dan Header pojok
       data_array[[0, 0]] <- "Var"
-      for (i in 1:1000) {
+      for (i in 1:3000) {
         data_array[[i, 0]] <- as.character(i)
       }
 
@@ -337,44 +392,43 @@ create_data_view <- function(parent, state) {
         frame_data,
         "table",
         variable = data_array,
-        rows = 1001, # 1000 baris data + 1 baris header
+        rows = 3001,
         cols = 30,
         titlerows = 1,
         titlecols = 1,
         selectmode = "extended",
         colwidth = 12,
         rowheight = 2,
-        background = "#ffffff",
+        background = theme_colors$background,
         foreground = "#000000",
         multiline = TRUE,
         rowseparator = "\n",
         colseparator = "\t",
         sparsearray = TRUE,
-        cache = TRUE # Stabilitas scrollbar
+        cache = TRUE,
+        colstretchmode = "unset"
       )
 
-      # ENABLE MOUSE SCROLL WHEEL (Cross-Platform)
+      # ENABLE MOUSE SCROLL WHEEL
       tcl(
         "bind",
         data_table,
         "<MouseWheel>",
         "%W yview scroll [expr {- (%D / 120) * 2}] units"
       )
-
       tcl(
         "bind",
         data_table,
         "<Shift-MouseWheel>",
         "%W xview scroll [expr {- (%D / 120) * 2}] units"
       )
-
       tcl("bind", data_table, "<Button-4>", "%W yview scroll -2 units")
       tcl("bind", data_table, "<Button-5>", "%W yview scroll 2 units")
 
-      # Var column 0, width = 6
+      # Var column 0, width = 6 (Karakter)
       tcl(data_table, "width", 0, 6)
 
-      # tag "sel" used to style and configure, cek dokumentasi Tktable
+      # tag "sel" used to style and configure
       tcl(
         data_table,
         "tag",
@@ -385,8 +439,6 @@ create_data_view <- function(parent, state) {
         "-foreground",
         "#ffffff"
       )
-
-      # Warna saat sel sedang diedit (Active)
       tcl(
         data_table,
         "tag",
@@ -399,8 +451,6 @@ create_data_view <- function(parent, state) {
         "-relief",
         "groove"
       )
-
-      # Warna header
       tcl(
         data_table,
         "tag",
@@ -416,8 +466,7 @@ create_data_view <- function(parent, state) {
         "flat"
       )
 
-      # Scrollbar (ttk::scrollbar TIDAK punya opsi -width, itu hanya ada
-      # di classic scrollbar. Jadi width dihilangkan.)
+      # Scrollbars
       xscr <- ttkscrollbar(
         frame_data,
         orient = "horizontal",
@@ -429,12 +478,76 @@ create_data_view <- function(parent, state) {
         command = function(...) tkyview(data_table, ...)
       )
 
-      # Hubungkan viewport Tktable ke scrollbar agar posisi thumb sinkron
       tkconfigure(
         data_table,
         xscrollcommand = function(...) tkset(xscr, ...),
         yscrollcommand = function(...) tkset(yscr, ...)
       )
+
+      # FUNGSI HOTKEY UNTUK MENGHAPUS KOLOM
+      delete_selected_column <- function() {
+        tryCatch(
+          {
+            row <- as.integer(tclvalue(tkindex(data_table, "active", "row")))
+            col <- as.integer(tclvalue(tkindex(data_table, "active", "col")))
+
+            # Pastikan yang diseleksi adalah header kolom (row == 0),
+            # bukan data cell (row > 0), dan bukan kolom nomor (col > 0)
+            if (
+              length(col) > 0 &&
+                !is.na(col) &&
+                col > 0 &&
+                row == 0
+            ) {
+              # POP-UP KONFIRMASI
+              col_name <- state$data_array[[0, col]]
+              if (
+                is.null(col_name) || nchar(trimws(as.character(col_name))) == 0
+              ) {
+                col_name <- paste("Kolom", col)
+              }
+
+              ans <- tkmessageBox(
+                title = "Konfirmasi Hapus",
+                message = paste0(
+                  "Apakah Anda yakin ingin menghapus kolom '",
+                  col_name,
+                  "'?\n\nSeluruh data di kolom ini akan hilang."
+                ),
+                type = "yesno",
+                icon = "warning"
+              )
+
+              # if "No" atau close pop-up, hentikan fungsi
+              if (tclvalue(ans) != "yes") {
+                return()
+              }
+
+              # otomatis geser setelah delete, sisa kolom ke move kekiri
+              tcl(data_table, "delete", "cols", col, 1)
+
+              # Hapus dari data frame di R
+              if (ncol(state$data) >= col) {
+                state$data <- state$data[, -col, drop = FALSE]
+              }
+
+              # Hapus dari metadata variable_info
+              if (nrow(state$variable_info) >= col) {
+                state$variable_info <- state$variable_info[-col, , drop = FALSE]
+              }
+
+              # 4Sinkronisasi ulang
+              sync_table_to_data(state)
+            }
+          },
+          error = function(e) {
+            # Silent error if it outside the cell
+          }
+        )
+      }
+
+      tkbind(data_table, "<Delete>", delete_selected_column)
+      tkbind(data_table, "<BackSpace>", delete_selected_column)
 
       # Konfigurasi style scrollbar
       for (orient in c("Vertical", "Horizontal")) {
@@ -443,11 +556,11 @@ create_data_view <- function(parent, state) {
           "configure",
           paste0(orient, ".TScrollbar"),
           "-background",
-          theme_colors$secondary, # Warna thumb (slider)
+          theme_colors$secondary,
           "-troughcolor",
-          theme_colors$primary, # <-- Warna latar (trough)
+          theme_colors$primary,
           "-arrowcolor",
-          "#ffffff", # Warna panah
+          "#ffffff",
           "-bordercolor",
           theme_colors$border,
           "-lightcolor",
@@ -457,8 +570,6 @@ create_data_view <- function(parent, state) {
           "-arrowsize",
           20
         )
-
-        # Efek hover/press
         tcl(
           "ttk::style",
           "map",
@@ -478,26 +589,41 @@ create_data_view <- function(parent, state) {
       tkgrid(yscr, row = 0, column = 1, sticky = "ns")
       tkgrid(xscr, row = 1, column = 0, sticky = "ew")
 
-      # Hanya tabel yang boleh membesar (weight = 1)
       tkgrid.rowconfigure(frame_data, 0, weight = 1)
       tkgrid.columnconfigure(frame_data, 0, weight = 1)
-      # Double click header to insert variable name
+
+      # =========================================================================
+      # FIX ERROR: Double click header
+      # =========================================================================
       tkbind(data_table, "<Double-Button-1>", function() {
-        row <- as.integer(tclvalue(tkindex(data_table, "active", "row")))
-        col <- as.integer(tclvalue(tkindex(data_table, "active", "col")))
-        if (
-          length(row) > 0 && !is.na(row) && row == 0 && !is.na(col) && col > 0
-        ) {
-          open_column_properties(col, state, data_array)
-        }
+        # tryCatch mencegah error saat user klik area kosong
+        tryCatch(
+          {
+            row <- as.integer(tclvalue(tkindex(data_table, "active", "row")))
+            col <- as.integer(tclvalue(tkindex(data_table, "active", "col")))
+
+            if (
+              length(row) > 0 &&
+                !is.na(row) &&
+                row == 0 &&
+                !is.na(col) &&
+                col > 0
+            ) {
+              open_column_properties(col, state, data_array)
+            }
+          },
+          error = function(e) {
+            # Abaikan error klik di luar sel
+          }
+        )
       })
+      # =========================================================================
 
       state$data_table_widget <- data_table
       state$data_array <- data_array
     },
     error = function(e) {
       cat("\n=== ERROR create_data_view ===\n", e$message, "\n")
-      # Tampilkan error sebagai dialog agar tidak silently swallowed
       tkmessageBox(
         title = "create_data_view error",
         message = e$message,
@@ -554,63 +680,88 @@ tcl(
 # ==============================================================================
 # FUNGSI MEMASUKKAN DATA KE TABEL
 # ==============================================================================
-process_imported_df <- function(df, filename) {
+process_imported_df <- function(df, filename, state) {
   if (ncol(df) == 0) {
-    tkmessageBox(
-      message = "File kosong atau format tidak sesuai.",
-      icon = "warning"
-    )
+    tkmessageBox(message = "File kosong.", icon = "warning")
     return()
   }
 
-  if (is.null(APP_STATE$data_array)) {
-    APP_STATE$data <- df
-    tkmessageBox(
-      message = "Data disimpan di memori, tapi tabel belum siap.",
-      icon = "warning"
-    )
+  if (is.null(state$data_array)) {
+    state$data <- df
     return()
   }
 
-  # 1. Bersihkan tabel lama (GUNAKAN NULL)
-  for (i in 1:1000) {
+  # Bersihkan tabel lama (Gunakan state)
+  for (i in 1:3000) {
     for (j in 1:30) {
-      APP_STATE$data_array[[i, j]] <- NULL
+      state$data_array[[i, j]] <- NULL
     }
   }
 
   max_cols <- min(ncol(df), 30)
-  max_rows <- min(nrow(df), 1000)
+  max_rows <- min(nrow(df), 3000)
 
-  # 2. Set nama kolom
+  # Set nama kolom
   for (j in seq_len(max_cols)) {
     col_name <- names(df)[j]
     if (is.null(col_name) || is.na(col_name) || nchar(trimws(col_name)) == 0) {
       col_name <- paste0("Var", j)
     }
-    APP_STATE$data_array[[0, j]] <- col_name
+    state$data_array[[0, j]] <- col_name
   }
 
-  # 3. Masukkan data
+  # Masukkan data
   for (i in seq_len(max_rows)) {
     for (j in seq_len(max_cols)) {
       val <- df[[j]][i]
-
-      # Jika NA, jadikan "" untuk pengecekan. Jika ada teks, hapus spasi berlebih.
       val_str <- if (is.na(val)) "" else trimws(as.character(val))
 
-      # Jika ada isinya (bukan "" dan bukan "NA"), masukkan datanya
       if (val_str != "" && val_str != "NA") {
-        APP_STATE$data_array[[i, j]] <- val_str
+        state$data_array[[i, j]] <- val_str
       } else {
-        # JIKA KOSONG: Biarkan NULL (jangan diisi spasi atau string kosong)
-        APP_STATE$data_array[[i, j]] <- NULL
+        state$data_array[[i, j]] <- NULL
       }
     }
   }
 
-  APP_STATE$data <- df
-  tcl("update") # Refresh tabel
+  # =========================================================================
+  # AUTO-DETECT TIPE DATA UNTUK variable_info
+  # =========================================================================
+  # Reset variable_info agar sesuai dengan file baru
+  state$variable_info <- data.frame(
+    name = character(),
+    type = character(),
+    label = character(),
+    stringsAsFactors = FALSE
+  )
+
+  for (j in seq_len(max_cols)) {
+    col_name <- names(df)[j]
+    if (is.null(col_name) || is.na(col_name) || nchar(trimws(col_name)) == 0) {
+      col_name <- paste0("Var", j)
+    }
+
+    if (is.numeric(df[[j]])) {
+      col_type <- "numeric (Scale)"
+    } else {
+      col_type <- "character (String)"
+    }
+
+    state$variable_info <- rbind(
+      state$variable_info,
+      data.frame(
+        name = col_name,
+        type = col_type,
+        label = "",
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  # =========================================================================
+
+  # Simpan ke state
+  state$data <- df
+  tcl("update")
 
   tkmessageBox(
     title = "Import Berhasil",
@@ -630,10 +781,27 @@ process_imported_df <- function(df, filename) {
 # FUNGSI FILE IMPORT
 # ==============================================================================
 
+transpose_imported_data <- function(df) {
+  # Lakukan transpose
+  df_t <- as.data.frame(t(df), stringsAsFactors = FALSE)
+
+  # Ambil nama variabel dari nama baris (sebelumnya nama kolom)
+  nama_variabel <- rownames(df_t)
+
+  # Susun ulang menjadi data frame yang rapi
+  df_tpose <- data.frame(
+    Variable = nama_variabel,
+    df_t,
+    row.names = NULL
+  )
+
+  return(df_tpose)
+}
+
 CSV_input <- function() {
   path <- tclvalue(tkgetOpenFile(
     title = "Pilih File CSV",
-    filetypes = "{{CSV} {.csv}} {{All Files} *}"
+    filetypes = "{{CSV} {.csv}}"
   ))
   if (nchar(path) == 0) {
     return()
@@ -641,9 +809,23 @@ CSV_input <- function() {
 
   tryCatch(
     {
-      # Gunakan header = TRUE agar baris pertama jadi nama kolom
-      df <- read.csv(path, header = TRUE, stringsAsFactors = FALSE)
-      process_imported_df(df, path)
+      # 1. Baca file TANPA header agar "Kerinci" dianggap data, bukan judul
+      df <- read.csv(path, header = FALSE, stringsAsFactors = FALSE)
+
+      # Transpose
+      df_t <- as.data.frame(t(df), stringsAsFactors = FALSE)
+
+      # Ambil kata pertama ("Kerinci") untuk dijadikan NAMA KOLOM
+      nama_kolom <- as.character(df_t[1, 1])
+
+      # Hapus baris pertama ("Kerinci") dari data, sisakan angka-angkanya saja
+      df_final <- df_t[-1, , drop = FALSE]
+
+      # Beri nama kolom sesuai kata pertama tadi
+      colnames(df_final) <- nama_kolom
+
+      # Masukkan ke tabel
+      process_imported_df(df_final, path, APP_STATE)
     },
     error = function(e) {
       tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
@@ -651,19 +833,20 @@ CSV_input <- function() {
   )
 }
 
+
 text_input <- function() {
   path <- tclvalue(tkgetOpenFile(
     title = "Pilih File Text",
-    filetypes = "{{Text} {.txt}} {{All Files} *}"
+    filetypes = "{{Text} {.txt}}"
   ))
   if (nchar(path) == 0) {
     return()
   }
-
   tryCatch(
     {
       df <- read.table(path, header = TRUE, stringsAsFactors = FALSE)
-      process_imported_df(df, path)
+      df_tpose <- transpose_imported_data(df)
+      process_imported_df(df_tpose, path, APP_STATE)
     },
     error = function(e) {
       tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
@@ -674,22 +857,20 @@ text_input <- function() {
 Excel_input <- function() {
   path <- tclvalue(tkgetOpenFile(
     title = "Pilih File Excel",
-    filetypes = "{{Excel} {.xlsx .xls}} {{All Files} *}"
+    filetypes = "{{Excel} {.xlsx .xls}}"
   ))
   if (nchar(path) == 0) {
     return()
   }
-
   if (!requireNamespace("readxl", quietly = TRUE)) {
     tkmessageBox(message = "Package 'readxl' belum terinstall.", icon = "error")
     return()
   }
-
   tryCatch(
     {
-      # TAMBAHKAN na = c("", "NA") DI SINI
       df <- readxl::read_excel(path, col_names = TRUE, na = c("", "NA"))
-      process_imported_df(as.data.frame(df), path)
+
+      process_imported_df(as.data.frame(df), path, APP_STATE)
     },
     error = function(e) {
       tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
@@ -700,21 +881,20 @@ Excel_input <- function() {
 SPSS_input <- function() {
   path <- tclvalue(tkgetOpenFile(
     title = "Pilih File SPSS",
-    filetypes = "{{SPSS} {.sav}} {{All Files} *}"
+    filetypes = "{{SPSS} {.sav}}"
   ))
   if (nchar(path) == 0) {
     return()
   }
-
   if (!requireNamespace("haven", quietly = TRUE)) {
     tkmessageBox(message = "Package 'haven' belum terinstall.", icon = "error")
     return()
   }
-
   tryCatch(
     {
       df <- haven::read_sav(path)
-      process_imported_df(as.data.frame(df), path)
+      # TAMBAHKAN APP_STATE DI SINI
+      process_imported_df(as.data.frame(df), path, APP_STATE)
     },
     error = function(e) {
       tkmessageBox(message = paste("Gagal:", e$message), icon = "error")
@@ -723,10 +903,701 @@ SPSS_input <- function() {
 }
 
 # ==============================================================================
+# FUNGSI VALIDASI DATA NON-NUMERIK
+# ==============================================================================
+check_non_numeric <- function(df, state) {
+  errors <- list()
+
+  for (j in seq_len(ncol(df))) {
+    col_name <- names(df)[j]
+
+    # Cek apakah user sudah mendeklarasikan kolom ini sebagai character/factor
+    declared_type <- state$variable_info$type[
+      state$variable_info$name == col_name
+    ]
+
+    # Jika user sudah set "String" atau "Categorical", abaikan pengecekan angka
+    if (length(declared_type) > 0 && grepl("character|factor", declared_type)) {
+      next
+    }
+
+    # Jika kolom bertipe karakter (atau belum diset), cek isinya
+    if (is.character(df[[j]])) {
+      vals <- df[[j]][!is.na(df[[j]])]
+      if (length(vals) > 0) {
+        num_vals <- suppressWarnings(as.numeric(vals))
+        bad_indices <- which(is.na(num_vals))
+
+        if (length(bad_indices) > 0) {
+          for (idx in bad_indices) {
+            errors[[length(errors) + 1]] <- list(
+              row = which(df[[j]] == vals[idx])[1],
+              col = col_name,
+              val = vals[idx]
+            )
+          }
+        }
+      }
+    }
+  }
+
+  if (length(errors) > 0) {
+    return(errors)
+  } else {
+    return(NULL)
+  }
+}
+
+# ==============================================================================
+# FUNGSI UJI NORMALITAS (SHAPIRO-WILK) + DESKRIPTIF + RESPONSIVE PLOT
+# ==============================================================================
+sumnorm <- function() {
+  sync_table_to_data(APP_STATE)
+
+  # Validasi data non-numerik
+  if (ncol(APP_STATE$data) > 0) {
+    error_found <- check_non_numeric(APP_STATE$data, APP_STATE)
+    if (!is.null(error_found)) {
+      max_display <- 5
+      n_errors <- length(error_found)
+      error_msgs <- sapply(head(error_found, max_display), function(e) {
+        sprintf("Baris %d (Kolom %s): '%s'", e$row, e$col, e$val)
+      })
+      msg_text <- paste(error_msgs, collapse = ", ")
+      if (n_errors > max_display) {
+        msg_text <- paste0(
+          msg_text,
+          ", dan ",
+          n_errors - max_display,
+          " error lainnya."
+        )
+      }
+      tkmessageBox(
+        title = "Error Input Data",
+        message = paste0(
+          "Terdapat ",
+          n_errors,
+          " data non-numerik:\n\n",
+          msg_text
+        ),
+        icon = "error"
+      )
+      return()
+    }
+  }
+
+  if (ncol(APP_STATE$data) == 0) {
+    tkmessageBox(message = "Tabel data masih kosong.", icon = "warning")
+    return()
+  }
+
+  numeric_cols <- names(APP_STATE$data)[sapply(APP_STATE$data, is.numeric)]
+  if (length(numeric_cols) == 0) {
+    tkmessageBox(
+      message = "Tidak ditemukan data numerik pada tabel.",
+      icon = "error"
+    )
+    return()
+  }
+
+  # Bentuk Window
+  win_norm <- tktoplevel()
+  tkwm.title(win_norm, "Uji Normalitas")
+  tkconfigure(win_norm, background = getOption("Rgui.theme_bl")$primary)
+  tkwm.geometry(win_norm, "950x800")
+  tkwm.minsize(win_norm, 700, 600)
+
+  main <- ttkframe(win_norm, padding = 15)
+  tkpack(main, fill = "both", expand = TRUE)
+
+  # 1. PEMILIHAN VARIABEL & ALPHA
+  param_frame <- ttklabelframe(main, text = " Input Parameter ", padding = 10)
+  tkpack(param_frame, fill = "x", pady = c(0, 10))
+
+  # Variabel
+  tkpack(ttklabel(param_frame, text = "Pilih Variabel Sampel:"), anchor = "w")
+  APP_STATE$var_norm_selected <- tclVar(numeric_cols[1])
+  combo_norm <- ttkcombobox(
+    param_frame,
+    textvariable = APP_STATE$var_norm_selected,
+    values = numeric_cols,
+    state = "readonly",
+    width = 25
+  )
+  tkpack(combo_norm, anchor = "w", pady = c(0, 10))
+
+  # Alpha radio button
+  tkpack(
+    ttklabel(param_frame, text = "Nilai alpha:"),
+    anchor = "w"
+  )
+  APP_STATE$var_alpha_norm <- tclVar("0.05") # Default 0.05
+
+  alpha_frame <- ttkframe(param_frame)
+  tkpack(alpha_frame, anchor = "w", pady = c(0, 10))
+
+  # Radio Button 0.01
+  tkpack(
+    ttkradiobutton(
+      alpha_frame,
+      text = "0.01",
+      variable = APP_STATE$var_alpha_norm,
+      value = "0.01",
+      command = function() update_perintah_norm()
+    ),
+    side = "left",
+    padx = c(0, 10)
+  )
+
+  # Radio Button 0.05
+  tkpack(
+    ttkradiobutton(
+      alpha_frame,
+      text = "0.05",
+      variable = APP_STATE$var_alpha_norm,
+      value = "0.05",
+      command = function() update_perintah_norm()
+    ),
+    side = "left",
+    padx = c(0, 10)
+  )
+
+  # Radio Button 0.10
+  tkpack(
+    ttkradiobutton(
+      alpha_frame,
+      text = "0.10",
+      variable = APP_STATE$var_alpha_norm,
+      value = "0.10",
+      command = function() update_perintah_norm()
+    ),
+    side = "left",
+    padx = c(0, 10)
+  )
+
+  # 2. OUTPUT SPLIT
+  out_frame <- ttkframe(main)
+  tkpack(out_frame, fill = "both", expand = TRUE)
+
+  # Kotak Perintah
+  cmd_frame <- ttklabelframe(out_frame, text = " Perintah R ", padding = 5)
+  tkgrid(cmd_frame, row = 0, column = 0, sticky = "nsew", padx = c(0, 5))
+  cmd_subframe <- ttkframe(cmd_frame)
+  tkpack(cmd_subframe, fill = "both", expand = TRUE)
+  APP_STATE$txt_perintah_norm <- tktext(
+    cmd_subframe,
+    height = 10,
+    width = 20,
+    font = "Courier 10",
+    state = "disabled",
+    bg = "#f8f9fa",
+    wrap = "word"
+  )
+  scrollbar_cmd <- ttkscrollbar(cmd_subframe, command = function(...) {
+    tkyview(APP_STATE$txt_perintah_norm, ...)
+  })
+  tkconfigure(APP_STATE$txt_perintah_norm, yscrollcommand = function(...) {
+    tkset(scrollbar_cmd, ...)
+  })
+  tkpack(scrollbar_cmd, side = "right", fill = "y")
+  tkpack(
+    APP_STATE$txt_perintah_norm,
+    side = "left",
+    fill = "both",
+    expand = TRUE
+  )
+
+  # Kotak Output
+  res_frame <- ttklabelframe(
+    out_frame,
+    text = " Output Statistik ",
+    padding = 5
+  )
+  tkgrid(res_frame, row = 0, column = 1, sticky = "nsew", padx = c(5, 0))
+  res_subframe <- ttkframe(res_frame)
+  tkpack(res_subframe, fill = "both", expand = TRUE)
+  APP_STATE$txt_output_norm <- tktext(
+    res_subframe,
+    height = 10,
+    width = 20,
+    font = "Courier 10",
+    state = "disabled",
+    bg = "#f8f9fa",
+    wrap = "word",
+    tabs = "250"
+  )
+  scrollbar_res <- ttkscrollbar(res_subframe, command = function(...) {
+    tkyview(APP_STATE$txt_output_norm, ...)
+  })
+  tkconfigure(APP_STATE$txt_output_norm, yscrollcommand = function(...) {
+    tkset(scrollbar_res, ...)
+  })
+  tkpack(scrollbar_res, side = "right", fill = "y")
+  tkpack(APP_STATE$txt_output_norm, side = "left", fill = "both", expand = TRUE)
+
+  tkgrid.columnconfigure(out_frame, 0, weight = 1)
+  tkgrid.columnconfigure(out_frame, 1, weight = 1)
+  tkgrid.rowconfigure(out_frame, 0, weight = 1)
+
+  APP_STATE$var_conclusion_norm <- tclVar("")
+  APP_STATE$lbl_conclusion_norm <- ttklabel(
+    main,
+    textvariable = APP_STATE$var_conclusion_norm,
+    font = "Arial 11 bold",
+    justify = "left"
+  )
+  tkpack(APP_STATE$lbl_conclusion_norm, side = "bottom", anchor = "w", pady = 5)
+
+  # 3. UPDATE PERINTAH R
+  update_perintah_norm <- function() {
+    var_name <- tclvalue(APP_STATE$var_norm_selected)
+    alpha_val <- tclvalue(APP_STATE$var_alpha_norm)
+
+    cmd <- sprintf(
+      paste0(
+        "# === UJI NORMALITAS SHAPIRO-WILK ===\n",
+        "x <- APP_STATE$data[['%s']]\n",
+        "x <- x[!is.na(x)]\n",
+        "alpha <- %s\n\n",
+
+        "# 1. Statistik Deskriptif\n",
+        "mean(x)\n",
+        "median(x)\n",
+        "var(x)\n",
+        "sd(x)\n",
+        "quantile(x, probs = c(0, 0.05, 0.10, 0.25, 0.50, 0.75, 1.0))\n\n",
+
+        "# Skewness & Kurtosis\n",
+        "sum((x - mean(x))^3) / length(x) / (sd(x)^3)\n",
+        "sum((x - mean(x))^4) / length(x) / (sd(x)^4) - 3\n\n",
+
+        "# 2. Uji Normalitas\n",
+        "res <- shapiro.test(x)\n",
+        "print(res)\n\n",
+
+        "# 3. Visualisasi\n",
+        "par(mfrow=c(1,2))\n",
+        "hist(x, main='Histogram', xlab='%s', col='lightblue', breaks='FD')\n",
+        "qqnorm(x, main='Q-Q Plot')\n",
+        "qqline(x, col='red')"
+      ),
+      var_name,
+      alpha_val,
+      var_name
+    )
+
+    tkconfigure(APP_STATE$txt_perintah_norm, state = "normal")
+    tkdelete(APP_STATE$txt_perintah_norm, "1.0", "end")
+    tkinsert(APP_STATE$txt_perintah_norm, "end", cmd)
+    tkconfigure(APP_STATE$txt_perintah_norm, state = "disabled")
+  }
+
+  tkbind(combo_norm, "<<ComboboxSelected>>", function() update_perintah_norm())
+  update_perintah_norm()
+
+  # 4. FUNGSI JALANKAN UJI
+  run_test_norm <- function() {
+    var_name <- tclvalue(APP_STATE$var_norm_selected)
+    alpha <- as.numeric(tclvalue(APP_STATE$var_alpha_norm))
+    x <- suppressWarnings(as.numeric(APP_STATE$data[[var_name]]))
+    x <- x[!is.na(x)]
+
+    if (length(x) < 3) {
+      tkmessageBox(
+        message = "Data minimal harus berisi 3 angka untuk uji normalitas!",
+        icon = "warning"
+      )
+      return()
+    }
+    if (length(x) > 5000) {
+      tkmessageBox(
+        message = "Uji Shapiro-Wilk maksimal 5000 data.",
+        icon = "warning"
+      )
+      return()
+    }
+
+    res <- tryCatch(shapiro.test(x), error = function(e) e)
+
+    # Konfigurasi Tag untuk GUI Text
+    txt_out <- APP_STATE$txt_output_norm
+    tkconfigure(txt_out, state = "normal")
+    tkdelete(txt_out, "1.0", "end")
+
+    tktag.configure(
+      txt_out,
+      "header",
+      font = "Courier 10 bold",
+      foreground = theme_colors$secondary
+    )
+    tktag.configure(txt_out, "bold", font = "Courier 10 bold")
+    tktag.configure(
+      txt_out,
+      "red",
+      foreground = "#D32F2F",
+      font = "Courier 10 bold"
+    )
+    tktag.configure(
+      txt_out,
+      "green",
+      foreground = "#388E3C",
+      font = "Courier 10 bold"
+    )
+
+    if (inherits(res, "error")) {
+      tkinsert(txt_out, "end", paste("Error:", res$message), "red")
+      tclvalue(APP_STATE$var_conclusion_norm) <- "Status: Error"
+      tkconfigure(APP_STATE$lbl_conclusion_norm, foreground = "red")
+    } else {
+      # --- HITUNG STATISTIK ---
+      n_val <- length(x)
+      mean_val <- mean(x)
+      median_val <- median(x)
+      sd_val <- sd(x)
+      var_val <- var(x)
+      probs_full <- c(0, 0.05, 0.10, 0.25, 0.50, 0.75, 1.0)
+      q_vals <- quantile(x, probs_full)
+      skew <- sum((x - mean_val)^3) / n_val / (sd_val^3)
+      kurt <- sum((x - mean_val)^4) / n_val / (sd_val^4) - 3
+      is_normal <- res$p.value > alpha
+
+      # --- HELPER UNTUK MENCETAK FORMAT RAPI ---
+      # Menggunakan %-22s agar titik dua (:) sejajar rapi
+      add_line <- function(label, val, tag = NULL) {
+        line <- paste0(label, "\t : ", val, "\n")
+        tkinsert(txt_out, "end", line)
+        if (!is.null(tag)) tktag.add(txt_out, tag, "end-1l", "end")
+      }
+
+      add_header <- function(text) {
+        tkinsert(
+          txt_out,
+          "end",
+          paste0(
+            "\n",
+            text,
+            "\n",
+            paste(rep("-", nchar(text)), collapse = ""),
+            "\n"
+          ),
+          "header"
+        )
+      }
+
+      # --- OUTPUT ---
+      tkinsert(
+        txt_out,
+        "end",
+        "========================================\n",
+        "header"
+      )
+      tkinsert(txt_out, "end", " UJI NORMALITAS & DESKRIPTIF\n", "header")
+      tkinsert(
+        txt_out,
+        "end",
+        "========================================\n\n",
+        "header"
+      )
+
+      add_line("Variabel", var_name, "bold")
+      add_line("Ukuran Sampel (n)", n_val)
+
+      add_header("STATISTIK DESKRIPTIF")
+      add_line("Rata-rata (\u03BC)", sprintf("%.4f", mean_val))
+      add_line("Variansi (\u03C3\u00B2)", sprintf("%.4f", var_val))
+      add_line("Std. Deviation (\u03C3)", sprintf("%.4f", sd_val)) #
+      add_line("Skewness", sprintf("%.4f", skew))
+      add_line("Kurtosis", sprintf("%.4f", kurt))
+
+      add_header("KUARTIL & PERSEKTIL")
+      labels <- c(
+        "Minimum (P0)",
+        "Persentil 5 (P5)",
+        "Persentil 10 (P10)",
+        "Kuartil 1 (P25/Q1)",
+        "Median (P50/Q2)",
+        "Kuartil 3 (P75/Q3)",
+        "Maksimum (P100)"
+      )
+      for (i in seq_along(q_vals)) {
+        add_line(labels[i], sprintf("%.4f", q_vals[i]))
+      }
+
+      add_header("HASIL UJI SHAPIRO-WILK")
+      add_line("Statistik W", sprintf("%.4f", res$statistic))
+      add_line("p-value", format.pval(res$p.value, digits = 4, eps = 0.0001))
+
+      tkinsert(txt_out, "end", "\nKESIMPULAN:\n", "bold")
+      if (is_normal) {
+        tkinsert(
+          txt_out,
+          "end",
+          sprintf(
+            "Data Berdistribusi NORMAL\n(p-value = %.4f > \u03B1 = %.2f)",
+            res$p.value,
+            alpha
+          ),
+          "green"
+        )
+      } else {
+        tkinsert(
+          txt_out,
+          "end",
+          sprintf(
+            "Data TIDAK Berdistribusi NORMAL\n(p-value = %.4f <= \u03B1 = %.2f)",
+            res$p.value,
+            alpha
+          ),
+          "red"
+        )
+      }
+
+      tclvalue(APP_STATE$var_conclusion_norm) <- if (is_normal) {
+        "Hasil: Data Normal"
+      } else {
+        "Hasil: Data Tidak Normal"
+      }
+      tkconfigure(
+        APP_STATE$lbl_conclusion_norm,
+        foreground = if (is_normal) "green" else "red"
+      )
+    }
+    tkconfigure(txt_out, state = "disabled")
+  }
+
+  # FUNGSI TAMPILKAN PLOT (VALID & STANDAR STATISTIK)
+  show_plot_norm <- function() {
+    var_name <- tclvalue(APP_STATE$var_norm_selected)
+    x <- suppressWarnings(as.numeric(APP_STATE$data[[var_name]]))
+    x <- x[!is.na(x)]
+
+    # Error jika data konstan atau < 3
+    if (length(x) < 3) {
+      return()
+    }
+    if (length(unique(x)) < 2) {
+      tkmessageBox(
+        message = "Data konstan (semua nilai sama), tidak dapat membuat plot.",
+        icon = "warning"
+      )
+      return()
+    }
+
+    # Window build setup
+    win_plot <- tktoplevel()
+    tkwm.title(win_plot, paste("Plot Uji Normalitas -", var_name))
+    tkwm.geometry(win_plot, "850x450")
+    tkconfigure(win_plot, background = theme_colors$primary)
+
+    canvas <- tkcanvas(
+      win_plot,
+      background = theme_colors$primary,
+      highlightthickness = 0
+    )
+    tkpack(canvas, fill = "both", expand = TRUE, padx = 10, pady = 10)
+
+    img_obj <- tkimage.create("photo")
+    tkcreate(canvas, "image", 0, 0, anchor = "nw", image = img_obj)
+
+    is_drawing <- FALSE
+
+    draw_plot <- function() {
+      if (is_drawing) {
+        return()
+      }
+      is_drawing <<- TRUE
+
+      tryCatch(
+        {
+          w <- as.integer(tkwinfo("width", canvas))
+          h <- as.integer(tkwinfo("height", canvas))
+          if (is.na(w) || is.na(h) || w < 100 || h < 100) {
+            is_drawing <<- FALSE
+            return()
+          }
+
+          tmp_file <- tempfile(fileext = ".png")
+          png(tmp_file, width = w, height = h, res = 96)
+
+          # Margin dan background standar statistik
+          par(mfrow = c(1, 2), mar = c(4, 4, 3, 1), bg = "white")
+
+          # --- PERSIAPAN DATA UNTUK Y-LIMIT ---
+          # Hitung Density bawaan R (Standar Silverman)
+          d <- density(x)
+
+          # Hitung Histogram (metode Freedman-Diaconis)
+          h_info <- hist(x, plot = FALSE, breaks = "FD")
+
+          # Hitung Kurva Normal Teoritis
+          norm_y <- dnorm(mean(x), mean = mean(x), sd = sd(x))
+
+          # Cari tinggi maksimum dari ketiganya agar sumbu Y pas
+          max_y <- max(c(h_info$density, d$y, norm_y), na.rm = TRUE) * 1.2
+          if (is.infinite(max_y) || is.na(max_y)) {
+            max_y <- 1
+          }
+
+          # --- PLOT 1: HISTOGRAM ---
+          hist(
+            x,
+            main = paste("Histogram:", var_name),
+            xlab = var_name,
+            col = theme_colors$primary,
+            border = "white",
+            freq = FALSE,
+            breaks = "FD",
+            ylim = c(0, max_y),
+            cex.main = 1.2,
+            cex.lab = 1.1
+          )
+
+          # Tambahkan Density (Garis Biru Solid)
+          lines(d, col = theme_colors$secondary, lwd = 2)
+
+          # Tambahkan Kurva Normal Teoritis (Garis Merah Putus-putus)
+          curve(
+            dnorm(x, mean = mean(x), sd = sd(x)),
+            add = TRUE,
+            col = "red",
+            lwd = 2,
+            lty = 2
+          )
+
+          # Grid halus untuk membantu pembacaan
+          grid(col = "gray90", lty = "dotted")
+
+          legend(
+            "topright",
+            legend = c("KDE (R Default)", "Normal Teoritis"),
+            col = c(theme_colors$secondary, "red"),
+            lty = c(1, 2),
+            lwd = 2,
+            cex = 0.8,
+            bty = "n"
+          )
+
+          # --- PLOT 2: Q-Q PLOT ---
+          qqnorm(
+            x,
+            main = paste("Normal Q-Q Plot:", var_name),
+            col = theme_colors$secondary,
+            pch = 16,
+            cex = 1.2,
+            cex.main = 1.2,
+            cex.lab = 1.1
+          )
+          qqline(x, col = "red", lwd = 2, lty = 2)
+          grid(col = "gray90", lty = "dotted")
+
+          dev.off()
+          tkconfigure(img_obj, file = tmp_file)
+          unlink(tmp_file)
+        },
+        error = function(e) {
+          cat("Plot error:", e$message, "\n")
+        }
+      )
+
+      is_drawing <<- FALSE
+    }
+
+    tcl("after", 200, function() draw_plot())
+    tkbind(canvas, "<Configure>", function() {
+      tcl("after", 100, function() draw_plot())
+    })
+
+    tkpack(
+      ttkbutton(
+        win_plot,
+        text = "TUTUP PLOT",
+        style = "Custom.TButton",
+        command = function() tkdestroy(win_plot)
+      ),
+      pady = c(0, 10)
+    )
+  }
+
+  # Tombol Aksi
+  btn_frame <- ttkframe(main)
+  tkpack(btn_frame, side = "bottom", pady = c(10, 5))
+
+  tkpack(
+    ttkbutton(
+      btn_frame,
+      text = "HITUNG (UJI NORMALITAS)",
+      command = run_test_norm
+    ),
+    side = "left",
+    padx = 10
+  )
+  tkpack(
+    ttkbutton(
+      btn_frame,
+      text = "PLOT",
+      command = show_plot_norm
+    ),
+    side = "left",
+    padx = 10
+  )
+  tkpack(
+    ttkbutton(btn_frame, text = "TUTUP", command = function() {
+      tkdestroy(win_norm)
+    }),
+    side = "left",
+    padx = 10
+  )
+}
+
+# ==============================================================================
 # FUNGSI UJI HIPOTESIS VARIANSI (1 POPULASI)
 # ==============================================================================
 sumvar1 <- function() {
   sync_table_to_data(APP_STATE)
+
+  # --- VALIDASI DATA NON-NUMERIK ---
+  if (ncol(APP_STATE$data) > 0) {
+    error_found <- check_non_numeric(APP_STATE$data, APP_STATE)
+
+    if (!is.null(error_found)) {
+      # Batasi maksimal 5 error agar pop-up tidak terlalu panjang
+      max_display <- 5
+      n_errors <- length(error_found)
+
+      # Buat format list: "Baris 5 (Kolom B): 'Apple'"
+      error_msgs <- sapply(head(error_found, max_display), function(e) {
+        sprintf("Baris %d (Kolom %s): '%s'", e$row, e$col, e$val)
+      })
+
+      # Gabungkan dengan koma
+      msg_text <- paste(error_msgs, collapse = ", ")
+
+      # Tambahkan info jika error lebih dari 5
+      if (n_errors > max_display) {
+        msg_text <- paste0(
+          msg_text,
+          ", dan ",
+          n_errors - max_display,
+          " error lainnya."
+        )
+      }
+
+      tkmessageBox(
+        title = "Error Input Data",
+        message = paste0(
+          "Terdapat ",
+          n_errors,
+          " data non-numerik pada tabel:\n\n",
+          msg_text,
+          "\n\n",
+          "Uji Variansi hanya dapat dilakukan pada data numerik.\n",
+          "Silakan perbaiki data Anda terlebih dahulu."
+        ),
+        icon = "error"
+      )
+      return() # Hentikan eksekusi
+    }
+  }
 
   if (ncol(APP_STATE$data) == 0) {
     tkmessageBox(
@@ -1111,7 +1982,7 @@ sumvar1 <- function() {
         sprintf(
           "%-22s : %g%%\n",
           "Confidence Level",
-          (1 - APP_STATE$alpha) * 1000
+          (1 - APP_STATE$alpha) * 100
         ),
         sprintf(
           "%-22s : [%.4f, %.4f]\n",
@@ -1178,6 +2049,50 @@ sumvar1 <- function() {
 # ==============================================================================
 sumvar2 <- function() {
   sync_table_to_data(APP_STATE)
+
+  # --- VALIDASI DATA NON-NUMERIK ---
+  if (ncol(APP_STATE$data) > 0) {
+    error_found <- check_non_numeric(APP_STATE$data, APP_STATE)
+
+    if (!is.null(error_found)) {
+      # Batasi maksimal 5 error agar pop-up tidak terlalu panjang
+      max_display <- 5
+      n_errors <- length(error_found)
+
+      # Buat format list: "Baris 5 (Kolom B): 'Apple'"
+      error_msgs <- sapply(head(error_found, max_display), function(e) {
+        sprintf("Baris %d (Kolom %s): '%s'", e$row, e$col, e$val)
+      })
+
+      # Gabungkan dengan koma
+      msg_text <- paste(error_msgs, collapse = ", ")
+
+      # Tambahkan info jika error lebih dari 5
+      if (n_errors > max_display) {
+        msg_text <- paste0(
+          msg_text,
+          ", dan ",
+          n_errors - max_display,
+          " error lainnya."
+        )
+      }
+
+      tkmessageBox(
+        title = "Error Input Data",
+        message = paste0(
+          "Terdapat ",
+          n_errors,
+          " data non-numerik pada tabel:\n\n",
+          msg_text,
+          "\n\n",
+          "Uji Variansi hanya dapat dilakukan pada data numerik.\n",
+          "Silakan perbaiki data Anda terlebih dahulu."
+        ),
+        icon = "error"
+      )
+      return() # Hentikan eksekusi
+    }
+  }
 
   if (ncol(APP_STATE$data) < 2) {
     tkmessageBox(
@@ -1542,7 +2457,7 @@ sumvar2 <- function() {
         sprintf(
           "%-22s : %g%%\n",
           "Confidence Level",
-          (1 - APP_STATE$alpha) * 1000
+          (1 - APP_STATE$alpha) * 100
         ),
         sprintf(
           "%-22s : [%.4f, %.4f]\n",
@@ -1611,6 +2526,546 @@ sumvar2 <- function() {
   update_perintah_2pop()
 }
 
+
+# ==============================================================================
+# FUNGSI HELP: DEVELOPER (TENTANG KAMI)
+# ==============================================================================
+dev_content <- function() {
+  tclServiceMode(FALSE)
+
+  win_dev <- tktoplevel()
+  tkwm.title(win_dev, "Tentang Developer")
+  tkconfigure(win_dev, background = theme_colors$primary)
+  tkwm.geometry(win_dev, "800x680")
+  tkwm.minsize(win_dev, 700, 710)
+  tkwm.maxsize(win_dev, 700, 710)
+
+  main <- ttkframe(win_dev, padding = 15)
+  tkpack(main, fill = "both", expand = TRUE)
+
+  # --- HEADER ---
+  header <- tkframe(main, background = theme_colors$secondary)
+  tkpack(header, fill = "x", pady = c(0, 15))
+
+  tkpack(
+    ttklabel(
+      header,
+      text = "Tabelkecil",
+      font = "Helvetica 18 bold",
+      background = theme_colors$secondary,
+      foreground = "#ffffff"
+    ),
+    pady = c(15, 5)
+  )
+  tkpack(
+    ttklabel(
+      header,
+      text = "PROGRAM PENGUJIAN HIPOTESIS VARIANSI",
+      font = "Helvetica 11 bold",
+      background = theme_colors$secondary,
+      foreground = theme_colors$border
+    ),
+    pady = 5
+  )
+  tkpack(
+    ttklabel(
+      header,
+      text = "UJI VARIANSI SATU POPULASI DAN DUA POPULASI",
+      font = "Helvetica 9 italic",
+      background = theme_colors$secondary,
+      foreground = theme_colors$primary
+    ),
+    pady = c(0, 15)
+  )
+
+  # --- INFO MATA KULIAH ---
+  course_box <- tkframe(
+    main,
+    background = theme_colors$border,
+    relief = "solid",
+    borderwidth = 1
+  )
+  tkpack(course_box, fill = "x", pady = c(0, 10))
+
+  tkpack(
+    ttklabel(
+      course_box,
+      text = "STATISTIKA KOMPUTASI",
+      font = "Helvetica 12 bold",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = c(10, 5)
+  )
+  tkpack(
+    ttklabel(
+      course_box,
+      text = "Dosen Pengampu:",
+      font = "Helvetica 10 bold",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = 2
+  )
+  tkpack(
+    ttklabel(
+      course_box,
+      text = "Dr. Toha Saifudin, M.Si.",
+      font = "Helvetica 10",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = 2
+  )
+  tkpack(
+    ttklabel(
+      course_box,
+      text = "Dr. Marisa Rifada, M.Si.",
+      font = "Helvetica 10",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = c(2, 10)
+  )
+
+  # --- INFO TIM ---
+  team_box <- tkframe(
+    main,
+    background = theme_colors$primary,
+    relief = "solid",
+    borderwidth = 1
+  )
+  tkpack(team_box, fill = "both", expand = TRUE, pady = c(0, 10))
+
+  tkpack(
+    ttklabel(
+      team_box,
+      text = "DIKEMBANGKAN OLEH: KELOMPOK 5",
+      font = "Helvetica 12 bold",
+      background = theme_colors$primary,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = c(12, 8)
+  )
+
+  team_members <- c(
+    "Adian Husaini Ramadhan  |  188251079",
+    "Jasmine Maharani        |  188251076",
+    "Arsya Rabbani Maharani  |  188241113"
+  )
+
+  for (i in seq_along(team_members)) {
+    row <- tkframe(team_box, background = theme_colors$border)
+    tkpack(row, fill = "x", padx = 20, pady = 3)
+
+    tkpack(
+      ttklabel(
+        row,
+        text = sprintf("%02d", i),
+        width = 4,
+        font = "Helvetica 10 bold",
+        background = theme_colors$secondary,
+        foreground = "#ffffff"
+      ),
+      side = "left",
+      padx = c(0, 10),
+      pady = 5
+    )
+
+    tkpack(
+      ttklabel(
+        row,
+        text = team_members[i],
+        font = "Helvetica 10",
+        anchor = "center",
+        justify = "center",
+        background = theme_colors$border,
+        foreground = theme_colors$secondary
+      ),
+      side = "left",
+      fill = "x",
+      expand = TRUE,
+      padx = 10,
+      pady = 5
+    )
+  }
+  tkpack(
+    ttklabel(team_box, text = " ", background = theme_colors$primary),
+    pady = 2
+  )
+
+  tkpack(
+    ttklabel(team_box, text = " ", background = theme_colors$primary),
+    pady = 2
+  )
+
+  # --- INFO KAMPUS ---
+  campus_box <- tkframe(
+    main,
+    background = theme_colors$border,
+    relief = "groove",
+    borderwidth = 2
+  )
+  tkpack(campus_box, fill = "x", pady = c(0, 15))
+
+  tkpack(
+    ttklabel(
+      campus_box,
+      text = "PROGRAM STUDI S1 STATISTIKA",
+      font = "Helvetica 11 bold",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = c(10, 2)
+  )
+  tkpack(
+    ttklabel(
+      campus_box,
+      text = "FAKULTAS SAINS DAN TEKNOLOGI",
+      font = "Helvetica 10",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = 2
+  )
+  tkpack(
+    ttklabel(
+      campus_box,
+      text = "UNIVERSITAS AIRLANGGA",
+      font = "Helvetica 11 bold",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = 2
+  )
+  tkpack(
+    ttklabel(
+      campus_box,
+      text = "2026",
+      font = "Helvetica 10",
+      background = theme_colors$border,
+      foreground = theme_colors$secondary,
+      justify = "center"
+    ),
+    pady = c(2, 10)
+  )
+
+  # --- TOMBOL ---
+  tkpack(
+    ttkbutton(
+      main,
+      text = "TUTUP",
+      style = "Custom.TButton",
+      command = function() tkdestroy(win_dev)
+    ),
+    pady = c(5, 0)
+  )
+
+  tclServiceMode(TRUE)
+}
+
+# ==============================================================================
+# FUNGSI HELP_CONTENT: MATERI UJI VARIANSI
+# ==============================================================================
+materi_content_Hvar <- function() {
+  tclServiceMode(FALSE)
+
+  win_mat <- tktoplevel()
+  tkwm.title(win_mat, "Materi Uji Variansi")
+  tkconfigure(win_mat, background = theme_colors$primary)
+  tkwm.geometry(win_mat, "750x600")
+
+  main <- ttkframe(win_mat, padding = 15)
+  tkpack(main, fill = "both", expand = TRUE)
+
+  # --- HEADER ---
+  header <- tkframe(main, background = theme_colors$secondary)
+  tkpack(header, fill = "x", pady = c(0, 10))
+  tkpack(
+    ttklabel(
+      header,
+      text = "MODUL PEMBELAJARAN UJI VARIANSI",
+      font = "Helvetica 14 bold",
+      background = theme_colors$secondary,
+      foreground = "#ffffff"
+    ),
+    pady = 12
+  )
+
+  # --- NOTEBOOK (TAB) ---
+  nb <- ttknotebook(main)
+  tkpack(nb, fill = "both", expand = TRUE, pady = c(0, 10))
+
+  add_tab <- function(title, text_content) {
+    tab <- ttkframe(nb)
+    tkadd(nb, tab, text = title)
+
+    scr <- ttkscrollbar(tab, orient = "vertical")
+    txt <- tktext(
+      tab,
+      wrap = "word",
+      font = "Helvetica 10",
+      bg = "#ffffff",
+      relief = "flat",
+      padx = 10,
+      pady = 10,
+      yscrollcommand = function(...) tkset(scr, ...)
+    )
+    tkconfigure(scr, command = function(...) tkyview(txt, ...))
+
+    tkpack(scr, side = "right", fill = "y")
+    tkpack(txt, side = "left", fill = "both", expand = TRUE)
+
+    tkconfigure(txt, state = "normal")
+    tkinsert(txt, "end", text_content)
+    tkconfigure(txt, state = "disabled")
+  }
+
+  # Isi Materi 1
+  add_tab(
+    "1. Pengertian",
+    paste0(
+      "Uji variansi adalah prosedur statistik untuk mengetahui apakah keragaman (variansi) ",
+      "dari suatu populasi atau perbandingan variansi dari dua populasi memiliki nilai tertentu ",
+      "atau saling sama.\n\n",
+      "Tujuan utama:\n",
+      "- Menguji kesamaan presisi/konsistensi antar kelompok data.\n",
+      "- Menjadi uji prasyarat (asumsi) sebelum uji beda rata-rata (seperti Uji-T)."
+    )
+  )
+
+  # Isi Materi 2
+  add_tab(
+    "2. Asumsi",
+    paste0(
+      "Agar hasil pengujian valid, beberapa asumsi berikut harus dipenuhi:\n\n",
+      "1. Sampel diambil secara acak (random sampling).\n",
+      "2. Antar sampel saling bebas (independen).\n",
+      "3. Populasi asal data harus berdistribusi normal.\n\n",
+      "Catatan: Normalitas data sebaiknya diuji terlebih dahulu (misal: Uji Shapiro-Wilk)."
+    )
+  )
+
+  # Isi Materi 3 (Menggunakan Simbol Unicode)
+  add_tab(
+    "3. Uji 1 Populasi",
+    paste0(
+      "Digunakan untuk menguji apakah variansi populasi (σ²) sama dengan nilai hipotesis (σ₀²).\n\n",
+      "Hipotesis:\n",
+      "H₀ : σ² = σ₀²\n",
+      "H₁ : σ² ≠ σ₀²\n\n",
+      "Statistik Uji (Chi-Square):\n",
+      "χ² = (n - 1) * s² / σ₀²\n",
+      "dengan derajat bebas (db) = n - 1."
+    )
+  )
+
+  # Isi Materi 4 (Menggunakan Simbol Unicode)
+  add_tab(
+    "4. Uji 2 Populasi",
+    paste0(
+      "Digunakan untuk membandingkan variansi dari dua populasi independen (Uji F).\n\n",
+      "Hipotesis:\n",
+      "H₀ : σ₁² = σ₂²  (Rasio = 1)\n",
+      "H₁ : σ₁² ≠ σ₂²\n\n",
+      "Statistik Uji (F):\n",
+      "F = s₁² / s₂²\n",
+      "dengan derajat bebas pembilang db₁ = n₁ - 1 dan penyebut db₂ = n₂ - 1."
+    )
+  )
+
+  # --- TOMBOL ---
+  tkpack(
+    ttkbutton(
+      main,
+      text = "TUTUP",
+      style = "Custom.TButton",
+      command = function() tkdestroy(win_mat)
+    ),
+    pady = c(5, 0)
+  )
+
+  tclServiceMode(TRUE)
+}
+
+# ==============================================================================
+# FUNGSI HELP: PETUNJUK PENGGUNAAN UJI VARIANSI
+# ==============================================================================
+guide_content_Hvar <- function() {
+  tclServiceMode(FALSE)
+
+  win_guide <- tktoplevel()
+  tkwm.title(win_guide, "Petunjuk Penggunaan")
+  tkconfigure(win_guide, background = theme_colors$primary)
+  tkwm.geometry(win_guide, "750x600")
+
+  main <- ttkframe(win_guide, padding = 15)
+  tkpack(main, fill = "both", expand = TRUE)
+
+  # --- HEADER ---
+  header <- tkframe(main, background = theme_colors$secondary)
+  tkpack(header, fill = "x", pady = c(0, 10))
+  tkpack(
+    ttklabel(
+      header,
+      text = "PETUNJUK PENGUJIAN HIPOTESIS VARIANSI",
+      font = "Helvetica 14 bold",
+      background = theme_colors$secondary,
+      foreground = "#ffffff"
+    ),
+    pady = 12
+  )
+
+  # --- NOTEBOOK (TAB) ---
+  nb <- ttknotebook(main)
+  tkpack(nb, fill = "both", expand = TRUE, pady = c(0, 10))
+
+  # Fungsi bantuan untuk membuat tab
+  add_tab <- function(title, text_content) {
+    tab <- ttkframe(nb)
+    tkadd(nb, tab, text = title)
+
+    scr <- ttkscrollbar(tab, orient = "vertical")
+    txt <- tktext(
+      tab,
+      wrap = "word",
+      font = "Helvetica 10",
+      bg = "#ffffff",
+      relief = "flat",
+      padx = 15,
+      pady = 15,
+      yscrollcommand = function(...) tkset(scr, ...)
+    )
+    tkconfigure(scr, command = function(...) tkyview(txt, ...))
+
+    tkpack(scr, side = "right", fill = "y")
+    tkpack(txt, side = "left", fill = "both", expand = TRUE)
+
+    tkconfigure(txt, state = "normal")
+    tkinsert(txt, "end", text_content)
+    tkconfigure(txt, state = "disabled")
+  }
+
+  # ==========================================
+  # TAB 1: INPUT DATA & FORMAT
+  # ==========================================
+  add_tab(
+    "1. Input Data",
+    paste0(
+      "LANGKAH 1: MEMASUKKAN DATA\n",
+      "------------------------------------------------------\n",
+      "Aplikasi ini menyediakan dua cara untuk memasukkan data ke dalam tabel:\n\n",
+      "1. INPUT MANUAL:\n",
+      "   - Klik langsung pada sel tabel (baris dan kolom), lalu ketik angkanya.\n",
+      "   - Tekan 'Enter' atau klik sel lain untuk menyimpan angka tersebut.\n",
+      "   - Untuk menamai kolom (header), klik ganda (double click) pada baris paling atas (baris 'Var').\n\n",
+      "2. IMPORT FILE (Menu File -> Import Data):\n",
+      "   - Pilih CSV, Excel, atau Text.\n",
+      "   - Pastikan file Anda memiliki format yang benar (lihat penjelasan di bawah).\n\n",
+      "------------------------------------------------------\n",
+      "FORMAT DATA YANG BENAR:\n\n",
+      "• UNTUK UJI 1 POPULASI (1 Kelompok Data):\n",
+      "  Data harus berada dalam SATU KOLOM vertikal. Baris pertama adalah nama variabel.\n",
+      "  Contoh:\n",
+      "  | Berat Badan |\n",
+      "  | 65.5        |\n",
+      "  | 70.2        |\n",
+      "  | 68.9        |\n\n",
+      "• UNTUK UJI 2 POPULASI (2 Kelompok Data):\n",
+      "  Data harus berada dalam DUA KOLOM bersebelahan (Sampel 1 dan Sampel 2).\n",
+      "  Contoh:\n",
+      "  | Kelas A | Kelas B |\n",
+      "  | 75      | 80      |\n",
+      "  | 82      | 78      |\n",
+      "  | 79      | 85      |\n\n",
+      "CATATAN:\n",
+      "Pastikan hanya memasukkan data ANGKA, header dapat berupa karakter."
+    )
+  )
+
+  # ==========================================
+  # TAB 2: PETUNJUK UJI 1 POPULASI
+  # ==========================================
+  add_tab(
+    "2. Uji 1 Populasi",
+    paste0(
+      "LANGKAH 2: UJI VARIANSI SATU POPULASI (CHI-SQUARE)\n",
+      "------------------------------------------------------\n",
+      "Digunakan untuk menguji apakah variansi suatu populasi (σ²) ",
+      "sama dengan nilai hipotesis tertentu (σ₀²).\n\n",
+      "LANGKAH-LANGKAH OPERASI:\n",
+      "1. Buka menu 'Pengujian Hipotesis' -> 'Variansi' -> 'Satu Populasi'.\n\n",
+      "2. Pilih Variabel Sampel:\n",
+      "   Pilih kolom data numerik yang ingin diuji dari menu dropdown.\n\n",
+      "3. Input Nilai Hipotesis (σ₀²):\n",
+      "   Ketikkan nilai variansi yang ingin diuji (harus angka > 0).\n\n",
+      "4. Pilih alpha (α):\n",
+      "   Centang salah satu: 0.01, 0.05, atau 0.10.\n\n",
+      "5. Pilih Arah Hipotesis:\n",
+      "   - Dua Arah (two.sided) : Menguji σ² ≠ σ₀²\n",
+      "   - Kiri (less)         : Menguji σ² < σ₀²\n",
+      "   - Kanan (greater)     : Menguji σ² > σ₀²\n\n",
+      "6. Klik tombol 'HITUNG (UJI VARIANSI)'.\n\n",
+      "OUTPUT:\n",
+      "- Perintah R yang dijalankan di balik layar.\n",
+      "- Nilai Statistik Uji (χ²) dan Degrees of Freedom (db).\n",
+      "- P-value dan Confidence Interval.\n",
+      "- Kesimpulan (Tolak H0 / Gagal Tolak H0) beserta visualisasi warna (Merah/Hijau)."
+    )
+  )
+
+  # ==========================================
+  # TAB 3: PETUNJUK UJI 2 POPULASI
+  # ==========================================
+  add_tab(
+    "3. Uji 2 Populasi",
+    paste0(
+      "LANGKAH 2: UJI VARIANSI DUA POPULASI (F-TEST)\n",
+      "------------------------------------------------------\n",
+      "Digunakan untuk membandingkan variansi dari dua populasi independen ",
+      "apakah keduanya memiliki keragaman yang sama (σ₁² = σ₂²).\n\n",
+      "LANGKAH-LANGKAH OPERASI:\n",
+      "1. Buka menu 'Pengujian Hipotesis' -> 'Variansi' -> 'Dua Populasi'.\n\n",
+      "2. Pilih Variabel Sampel:\n",
+      "   - Variabel 1 (x1): Pilih kolom data untuk kelompok pertama.\n",
+      "   - Variabel 2 (x2): Pilih kolom data untuk kelompok kedua.\n\n",
+      "3. Pilih Taraf Signifikansi (α):\n",
+      "   Centang salah satu: 0.01, 0.05, atau 0.10.\n\n",
+      "4. Pilih Arah Hipotesis:\n",
+      "   - Dua Arah (two.sided) : Menguji σ₁²/σ₂² ≠ 1\n",
+      "   - Kiri (less)         : Menguji σ₁²/σ₂² < 1\n",
+      "   - Kanan (greater)     : Menguji σ₁²/σ₂² > 1\n\n",
+      "5. Klik tombol 'HITUNG (UJI VARIANSI 2 POP)'.\n\n",
+      "OUTPUT:\n",
+      "- Perintah R yang dijalankan di balik layar.\n",
+      "- Nilai Statistik Uji (F) beserta derajat bebas (db1, db2).\n",
+      "- P-value dan Confidence Interval Rasio Variansi.\n",
+      "- Kesimpulan (Tolak H0 / Gagal Tolak H0) beserta visualisasi warna (Merah/Hijau).\n\n"
+    )
+  )
+
+  # --- TOMBOL ---
+  tkpack(
+    ttkbutton(
+      main,
+      text = "TUTUTP",
+      style = "Custom.TButton",
+      command = function() tkdestroy(win_guide)
+    ),
+    pady = c(5, 0)
+  )
+
+  tclServiceMode(TRUE)
+}
+
 # ==============================================================================
 # STRUKTUR TOPMENU
 # ==============================================================================
@@ -1630,15 +3085,45 @@ Submenu_container <- list(
     )
   ),
   list(
-    label = "Pengujian Hipotesis",
+    label = "Analisis",
     children = list(
       list(
-        label = "Variansi",
+        label = "uji hipotesis variansi",
         children = list(
-          list(label = "Satu Populasi", command = "sumvar1"),
-          list(label = "Dua Populasi", command = "sumvar2")
+          list(label = "satu populasi", command = "sumvar1"),
+          list(label = "dua populasi", command = "sumvar2")
+        )
+      ),
+      list(
+        label = "Uji asumsi",
+        children = list(
+          list(label = "Uji normalitas", command = "sumnorm")
         )
       )
+    )
+  ),
+  list(
+    label = "Help",
+    children = list(
+      list(
+        label = "Petunjuk Penggunaan",
+        children = list(
+          list(
+            label = "Uji Hipotesis Variansi",
+            command = "guide_content_Hvar"
+          )
+        )
+      ),
+      list(
+        label = "Materi",
+        children = list(
+          list(
+            label = "Uji Hipotesis Variansi",
+            command = "materi_content_Hvar"
+          )
+        )
+      ),
+      list(label = "tentang kami", command = "dev_content")
     )
   )
 )
@@ -1815,6 +3300,8 @@ Start_open <- function() {
   # Matikan service mode agar tidak glitch saat merakit UI
   tclServiceMode(FALSE)
 
+  on.exit(tclServiceMode(TRUE), add = TRUE) # if freeze (error), redraw
+
   Main_page <- tktoplevel()
   tkwm.title(Main_page, "Statistika - Software Uji Hipotesis")
   tkconfigure(Main_page, background = getOption("Rgui.theme_bl")$primary)
@@ -1822,6 +3309,43 @@ Start_open <- function() {
   # Main window body
   tkwm.geometry(Main_page, "1050x700")
   tkwm.minsize(Main_page, 800, 600)
+
+  # INTERCEPT TOMBOL CLOSE (X) PADA MAIN WINDOW
+  tcl("wm", "protocol", Main_page, "WM_DELETE_WINDOW", function() {
+    # Sinkronisasi tabel ke data R untuk memastikan kita mengecek data terbaru
+    sync_table_to_data(APP_STATE)
+
+    # Cek apakah tabel kosong (belum ada input)
+    is_data_empty <- is.null(APP_STATE$data) ||
+      ncol(APP_STATE$data) == 0 ||
+      nrow(APP_STATE$data) == 0
+
+    # Cek apakah ada window lain yang terbuka (selain Main_page)
+    all_windows <- as.character(tkwinfo("children", "."))
+    has_other_windows <- length(all_windows) > 1
+
+    # Jika data kosong DAN tidak ada window lain, langsung tutup tanpa peringatan
+    if (is_data_empty && !has_other_windows) {
+      for (win in all_windows) {
+        try(tkdestroy(win), silent = TRUE)
+      }
+      return()
+    }
+
+    # ada data atau ada window lain, munculkan peringatan
+    ans <- tkmessageBox(
+      title = "Konfirmasi Keluar",
+      message = "Apakah Anda yakin ingin menutup aplikasi?\nData atau jendela analisis yang sedang terbuka akan hilang.",
+      type = "yesno",
+      icon = "question"
+    )
+
+    if (tclvalue(ans) == "yes") {
+      for (win in all_windows) {
+        try(tkdestroy(win), silent = TRUE)
+      }
+    }
+  })
 
   # Topmenu
   create_custom_menubar(Main_page, Submenu_container)
